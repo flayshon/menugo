@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"menugo.flayshon.com/internal/data"
 	"menugo.flayshon.com/internal/validator"
 )
 
@@ -163,4 +164,16 @@ func (app *application) readTime(qs url.Values, key string, v *validator.Validat
 		return time.Time{}
 	}
 	return t
+}
+
+type metadataResponse struct {
+	CurrentPage  int `json:"current_page,omitempty"`
+	PageSize     int `json:"page_size,omitempty"`
+	FirstPage    int `json:"first_page,omitempty"`
+	LastPage     int `json:"last_page,omitempty"`
+	TotalRecords int `json:"total_records"`
+}
+
+func newMetadataResponse(m data.Metadata) metadataResponse {
+	return metadataResponse{m.CurrentPage, m.PageSize, m.FirstPage, m.LastPage, m.TotalRecords}
 }

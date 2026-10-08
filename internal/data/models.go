@@ -30,6 +30,8 @@ type Models struct {
 	MenuItems   MenuItemModel
 	Zones       DeliveryZoneModel
 	Orders      OrderModel
+	Drivers     DriverModel
+	Deliveries  DeliveryModel
 }
 
 func NewModels(db *sql.DB) Models {
@@ -42,6 +44,8 @@ func NewModels(db *sql.DB) Models {
 		MenuItems:   MenuItemModel{DB: db},
 		Zones:       DeliveryZoneModel{DB: db},
 		Orders:      OrderModel{DB: db},
+		Drivers:     DriverModel{DB: db},
+		Deliveries:  DeliveryModel{DB: db},
 	}
 }
 

@@ -41,12 +41,12 @@ Validation failures (`422 Unprocessable Entity`) map field names to messages:
 
 **Roles.** Each user has a role in each restaurant they belong to:
 
-| Role | View restaurant | Update restaurant | Delete restaurant | Manage members | View menu & zones | Edit menu & zones | Mark items sold out | Manage orders |
-|------|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `restaurant_owner` | ✓ | ✓ | ✓ | admins, staff, drivers | ✓ | ✓ | ✓ | ✓ |
-| `restaurant_admin` | ✓ | ✓ |   | staff, drivers | ✓ | ✓ | ✓ | ✓ |
-| `restaurant_staff` | ✓ |   |   |   | ✓ |   | ✓ | ✓ |
-| `driver`           | ✓ |   |   |   |   |   |   |   |
+| Role | View restaurant | Update restaurant | Delete restaurant | Manage members | View menu, zones & drivers | Edit menu, zones & drivers | Mark items sold out | Manage orders & assign drivers | Deliver |
+|------|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `restaurant_owner` | ✓ | ✓ | ✓ | admins, staff, drivers | ✓ | ✓ | ✓ | ✓ |   |
+| `restaurant_admin` | ✓ | ✓ |   | staff, drivers | ✓ | ✓ | ✓ | ✓ |   |
+| `restaurant_staff` | ✓ |   |   |   | ✓ |   | ✓ | ✓ |   |
+| `driver`           | ✓ |   |   |   |   |   |   |   | own deliveries |
 
 ---
 
@@ -200,6 +200,9 @@ Cancels the order if the restaurant hasn't confirmed it yet (`can_cancel` is
 `true`). `200` with the updated order; `409` once it can no longer be
 cancelled by the customer.
 
+Tracking also includes `driver`: the first name of the assigned driver while
+the order is assigned or on its way, otherwise `null`.
+
 ### Order lifecycle
 
 ```
@@ -247,6 +250,10 @@ An order, as the restaurant sees it:
 - `next_statuses` lists the moves allowed from the current status (see
   [Order lifecycle](#order-lifecycle)): use it to decide which buttons to show.
 
+- `delivery` (single orders only) is the order's current driver assignment:
+  the one in progress, or how the last one ended. Absent if no driver was
+  ever assigned (or the last one was unassigned). See [Deliveries](#deliveries).
+
 ### `GET /v1/restaurants/{restaurantID}/orders`
 
 Orders with their items (without `status_history`), plus pagination metadata.
@@ -283,6 +290,116 @@ Changes the status; nothing else about an order can be changed.
 the customer. `200` with the updated order; `409` if the move isn't allowed
 from the current status (including when someone else changed it first);
 `422` for an unknown status.
+
+## Drivers
+
+Under `/v1/restaurants/{restaurantID}/drivers`. A driver is a registered user
+with the `driver` role in the restaurant plus a driver profile. A user can
+drive for several restaurants.
+
+```json
+{
+  "id": 3, "user_id": 12, "email": "joao@example.com", "name": "João Silva",
+  "phone": "81988887777", "vehicle": "Honda CG 160", "is_active": true,
+  "version": 1, "created_at": "...", "updated_at": "..."
+}
+```
+
+| Method and path | Who | Result |
+|-----------------|-----|--------|
+| `GET /drivers[?active=true]` | staff and up | `200` `{"drivers": [...]}` by name |
+| `POST /drivers` | owners, admins | `201`; see below |
+| `GET /drivers/{driverID}` | staff and up | `200` |
+| `PATCH /drivers/{driverID}` | owners, admins | `200`; `name`, `phone`, `vehicle`, `is_active`, optional `version` |
+| `DELETE /drivers/{driverID}` | owners, admins | `204`; removes the profile **and** the driver role. `409` while the driver has deliveries in progress. To pause someone, set `is_active: false` instead. |
+
+`POST /drivers` takes `{"email", "phone", "name"?, "vehicle"?, "is_active"?}`.
+The email must belong to a registered user. If they aren't a member yet they
+get the `driver` role; if they're a member with another role, `422`. `name`
+defaults to the user's name. Phones are normalized like customers' (8–15
+digits).
+
+Inactive drivers can finish their current deliveries but can't be given new
+ones. Removing a driver through `DELETE /members/{userID}` follows the same
+rules.
+
+## Deliveries
+
+A delivery is one driver assignment for a delivery order. It follows the
+order, whoever moves it, staff or driver:
+
+| Order becomes | Delivery becomes |
+|---------------|------------------|
+| `out_for_delivery` | `picked_up` |
+| `delivered` | `delivered` |
+| `cancelled` | `cancelled` |
+
+Reassigning ends the current delivery as `unassigned` and starts a new one,
+so the history is kept. Restaurants don't have to assign drivers: orders
+without one move through every status as before.
+
+```json
+{
+  "id": 9, "status": "assigned",
+  "driver": {"id": 3, "name": "João Silva", "phone": "81988887777", "vehicle": "Honda CG 160"},
+  "assigned_by_user_id": 2,
+  "assigned_at": "...", "picked_up_at": null, "delivered_at": null, "ended_at": null
+}
+```
+
+`driver` is `null` if the driver has since been removed.
+
+### `PUT /v1/restaurants/{restaurantID}/orders/{orderID}/driver`
+
+Staff and up. `{"driver_id": 3}` assigns (or reassigns) a driver. `200`
+`{"delivery": {...}}`. Assigning the current driver again changes nothing.
+
+- Only delivery orders that are `confirmed`, `preparing` or
+  `ready_for_delivery` (`409` otherwise: once an order is out, its driver
+  can't change).
+- The driver must be an active driver of this restaurant (`422`).
+
+### `DELETE /v1/restaurants/{restaurantID}/orders/{orderID}/driver`
+
+Staff and up. Takes the driver off the order. `204`; `404` if it has none.
+
+### For drivers: `/v1/me/deliveries`
+
+Any authenticated user: their own deliveries, across every restaurant they
+drive for.
+
+- `GET /v1/me/deliveries` lists them, newest first. Use
+  `?status=assigned,picked_up` for the ones in progress. Pagination as for
+  orders.
+- `GET /v1/me/deliveries/{deliveryID}` shows one. Other people's deliveries
+  are `404`.
+- `PATCH /v1/me/deliveries/{deliveryID}` reports progress:
+  `{"status": "picked_up"}` when leaving with the order (the order must be
+  `ready_for_delivery`), `{"status": "delivered"}` when it's handed over.
+  The order moves with it, and its history records the driver. `409` if the
+  order isn't ready yet or the delivery was reassigned; `422` for any other
+  status.
+
+```json
+{
+  "id": 9, "status": "assigned",
+  "assigned_at": "...", "picked_up_at": null, "delivered_at": null, "ended_at": null,
+  "restaurant": {"id": 1, "name": "Pizza Place", "phone": "", "address_line": "", "city": "Recife"},
+  "order": {
+    "id": 17, "status": "ready_for_delivery",
+    "customer": {"name": "Ana Souza", "phone": "+5581999990000"},
+    "address": {"line": "Rua da Aurora, 100", "details": "apto 12", "city": "Recife", "postal_code": "50030230"},
+    "items": [{"name": "Pizza", "quantity": 1, "notes": "no olives"}],
+    "total_cents": 5300, "currency": "BRL", "notes": "ring the bell"
+  }
+}
+```
+
+`customer` and `address` are only included while the delivery is in
+progress (`assigned` or `picked_up`); they are `null` before and after.
+
+Staff can also mark orders `out_for_delivery` and `delivered` themselves
+(e.g. if a driver's phone dies); the history shows who did it.
 
 ## Delivery zones
 

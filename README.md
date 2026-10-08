@@ -7,10 +7,11 @@ drivers.
 Written in Go with the standard library (`net/http`, `database/sql`,
 `log/slog`) and MariaDB, in the style of Alex Edwards' *Let's Go Further*.
 
-**Status:** Phase 5. Users, authentication, restaurants, membership/roles,
+**Status:** Phases 1–8. Users, authentication, restaurants, membership/roles,
 menu management, the public menu, delivery zones, customer ordering (delivery
-and pickup, with tracking and cancellation) and order management for
-restaurant staff are implemented. Drivers and deliveries come next.
+and pickup, with tracking and cancellation), order management, drivers,
+driver assignment and the delivery lifecycle are implemented. Notifications
+and real-time updates are next.
 
 API reference: [docs/api.md](docs/api.md).
 
@@ -140,6 +141,12 @@ docs/               API reference
   changes never alter placed orders. Placing an order is one transaction.
   Status changes go through one state machine (`internal/data/orderstatus.go`),
   lock the order row, and are recorded in `order_status_history`.
+- **Deliveries.** A delivery records one driver assignment and follows the
+  order's status, whether staff or the driver moves it. Everything that
+  changes an order or its deliveries locks the order row first, so they
+  serialize without deadlocks. A generated column with a unique key lets the
+  database itself guarantee at most one active delivery per order. Drivers
+  only see customer contact details while a delivery is in progress.
 - **Customer tracking.** Customers get a random tracking token; only its hash
   is stored. Tracking responses leave out the customer's contact details and
   address. Request logs show `/v1/tracking/{token}` instead of the real path.

@@ -112,18 +112,38 @@ func (m MembershipModel) Insert(ctx context.Context, ms *Membership) error {
 
 // Delete removes userID's membership of restaurantID, but only if they still
 // have the role the caller checked; otherwise it returns ErrEditConflict.
+// Removing a driver also removes their driver profile, and is refused with
+// ErrDriverBusy while they have deliveries in progress.
 func (m MembershipModel) Delete(ctx context.Context, restaurantID, userID int64, role Role) error {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	result, err := m.DB.ExecContext(ctx,
+	tx, err := m.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if role == RoleDriver {
+		if err := checkDriverIdle(ctx, tx, restaurantID, userID); err != nil {
+			return err
+		}
+	}
+
+	result, err := tx.ExecContext(ctx,
 		"DELETE FROM restaurant_users WHERE restaurant_id = ? AND user_id = ? AND role = ?",
 		restaurantID, userID, role)
 	if err != nil {
 		return fmt.Errorf("deleting membership: %w", err)
 	}
+	if err := expectOneRow(result, ErrEditConflict); err != nil {
+		return err
+	}
 
-	return expectOneRow(result, ErrEditConflict)
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing membership deletion: %w", err)
+	}
+	return nil
 }
 
 // ListMembers returns everyone with access to restaurantID, oldest first.

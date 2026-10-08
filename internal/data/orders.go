@@ -120,8 +120,9 @@ type Order struct {
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 
-	Items   []OrderItem
-	History []StatusChange
+	Items    []OrderItem
+	History  []StatusChange
+	Delivery *Delivery // the current delivery (see DeliveryModel.Current), if any; only on single orders
 }
 
 var phoneRX = regexp.MustCompile(`^\+?[0-9]{8,15}$`)
@@ -457,6 +458,10 @@ func (m OrderModel) getOrder(ctx context.Context, where string, args ...any) (*O
 	if order.History, err = m.history(ctx, order); err != nil {
 		return nil, err
 	}
+	order.Delivery, err = currentDelivery(ctx, m.DB, order.RestaurantID, order.ID)
+	if err != nil && !errors.Is(err, ErrRecordNotFound) {
+		return nil, err
+	}
 	return order, nil
 }
 
@@ -527,9 +532,8 @@ func (m OrderModel) history(ctx context.Context, order *Order) ([]StatusChange, 
 
 // Transition moves order id of restaurantID to status to, if the rules allow
 // actor to (see CanTransition), and records the change and reason (see
-// ValidateStatusChange) in its history. The order row is locked while the
-// change is checked and made, so two concurrent changes can't both succeed
-// from the same status.
+// ValidateStatusChange) in its history. The order's delivery, if it has one
+// in progress, follows: see syncDelivery.
 func (m OrderModel) Transition(ctx context.Context, restaurantID, id int64, to OrderStatus, actor Actor, reason string) error {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -540,19 +544,43 @@ func (m OrderModel) Transition(ctx context.Context, restaurantID, id int64, to O
 	}
 	defer tx.Rollback()
 
+	if _, err := transitionTx(ctx, tx, restaurantID, id, to, actor, reason); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing order status change: %w", err)
+	}
+	return nil
+}
+
+// lockOrder locks order id of restaurantID until tx ends and returns its
+// kind and status. Everything that changes an order or its deliveries locks
+// the order first, so they never deadlock with each other.
+func lockOrder(ctx context.Context, tx *sql.Tx, restaurantID, id int64) (*Order, error) {
 	order := &Order{RestaurantID: restaurantID, ID: id}
-	err = tx.QueryRowContext(ctx,
+	err := tx.QueryRowContext(ctx,
 		"SELECT fulfillment, status FROM orders WHERE restaurant_id = ? AND id = ? FOR UPDATE",
 		restaurantID, id).Scan(&order.Fulfillment, &order.Status)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ErrRecordNotFound
+			return nil, ErrRecordNotFound
 		}
-		return fmt.Errorf("locking order: %w", err)
+		return nil, fmt.Errorf("locking order: %w", err)
+	}
+	return order, nil
+}
+
+// transitionTx does the work of Transition inside tx and returns the status
+// the order had before.
+func transitionTx(ctx context.Context, tx *sql.Tx, restaurantID, id int64, to OrderStatus, actor Actor, reason string) (OrderStatus, error) {
+	order, err := lockOrder(ctx, tx, restaurantID, id)
+	if err != nil {
+		return "", err
 	}
 
 	if !CanTransition(order.Fulfillment, order.Status, to, actor.Type) {
-		return &InvalidTransitionError{From: order.Status, To: to}
+		return "", &InvalidTransitionError{From: order.Status, To: to}
 	}
 
 	changedAt := now()
@@ -561,16 +589,17 @@ func (m OrderModel) Transition(ctx context.Context, restaurantID, id int64, to O
 		"UPDATE orders SET status = ?, version = version + 1, updated_at = ? WHERE restaurant_id = ? AND id = ?",
 		to, changedAt, restaurantID, id)
 	if err != nil {
-		return fmt.Errorf("updating order status: %w", err)
+		return "", fmt.Errorf("updating order status: %w", err)
 	}
 
 	change := StatusChange{From: order.Status, To: to, ActorType: actor.Type, ActorUserID: actor.UserID, Reason: reason, At: changedAt}
 	if err := insertStatusChange(ctx, tx, order, change); err != nil {
-		return err
+		return "", err
 	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing order status change: %w", err)
+	if err := syncDelivery(ctx, tx, restaurantID, id, to, changedAt); err != nil {
+		return "", err
 	}
-	return nil
+
+	return order.Status, nil
 }

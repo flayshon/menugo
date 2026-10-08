@@ -25,6 +25,7 @@ type orderResponse struct {
 	Currency         string               `json:"currency"`
 	Notes            string               `json:"notes"`
 	StatusHistory    []orderEventResponse `json:"status_history,omitempty"` // only on single orders
+	Delivery         *deliveryResponse    `json:"delivery,omitempty"`       // only on single orders
 	NextStatuses     []data.OrderStatus   `json:"next_statuses"`
 	Version          int32                `json:"version"`
 	CreatedAt        time.Time            `json:"created_at"`
@@ -87,6 +88,7 @@ func newOrderResponse(o *data.Order) orderResponse {
 		TotalCents:       o.TotalCents,
 		Currency:         o.Currency,
 		Notes:            o.Notes,
+		Delivery:         newDeliveryResponse(o.Delivery),
 		NextStatuses:     data.NextStatuses(o.Fulfillment, o.Status),
 		Version:          o.Version,
 		CreatedAt:        o.CreatedAt,
@@ -170,15 +172,7 @@ func (app *application) listOrdersHandler(w http.ResponseWriter, r *http.Request
 		resp = append(resp, newOrderResponse(o))
 	}
 
-	meta := struct {
-		CurrentPage  int `json:"current_page,omitempty"`
-		PageSize     int `json:"page_size,omitempty"`
-		FirstPage    int `json:"first_page,omitempty"`
-		LastPage     int `json:"last_page,omitempty"`
-		TotalRecords int `json:"total_records"`
-	}{metadata.CurrentPage, metadata.PageSize, metadata.FirstPage, metadata.LastPage, metadata.TotalRecords}
-
-	err = app.writeJSON(w, http.StatusOK, envelope{"orders": resp, "metadata": meta}, nil)
+	err = app.writeJSON(w, http.StatusOK, envelope{"orders": resp, "metadata": newMetadataResponse(metadata)}, nil)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}

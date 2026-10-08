@@ -67,5 +67,21 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("GET /v1/restaurants/{restaurantID}/orders/{orderID}", app.requireRestaurantRole(data.StaffRoles, app.showOrderHandler))
 	mux.HandleFunc("PATCH /v1/restaurants/{restaurantID}/orders/{orderID}", app.requireRestaurantRole(data.StaffRoles, app.updateOrderHandler))
 
+	// Drivers. Staff see them (to dispatch); owners and admins manage them.
+	mux.HandleFunc("GET /v1/restaurants/{restaurantID}/drivers", app.requireRestaurantRole(data.StaffRoles, app.listDriversHandler))
+	mux.HandleFunc("POST /v1/restaurants/{restaurantID}/drivers", app.requireRestaurantRole(data.ManagerRoles, app.createDriverHandler))
+	mux.HandleFunc("GET /v1/restaurants/{restaurantID}/drivers/{driverID}", app.requireRestaurantRole(data.StaffRoles, app.showDriverHandler))
+	mux.HandleFunc("PATCH /v1/restaurants/{restaurantID}/drivers/{driverID}", app.requireRestaurantRole(data.ManagerRoles, app.updateDriverHandler))
+	mux.HandleFunc("DELETE /v1/restaurants/{restaurantID}/drivers/{driverID}", app.requireRestaurantRole(data.ManagerRoles, app.deleteDriverHandler))
+
+	// Assigning drivers to orders.
+	mux.HandleFunc("PUT /v1/restaurants/{restaurantID}/orders/{orderID}/driver", app.requireRestaurantRole(data.StaffRoles, app.assignDriverHandler))
+	mux.HandleFunc("DELETE /v1/restaurants/{restaurantID}/orders/{orderID}/driver", app.requireRestaurantRole(data.StaffRoles, app.unassignDriverHandler))
+
+	// Drivers' own deliveries, across all the restaurants they drive for.
+	mux.HandleFunc("GET /v1/me/deliveries", app.requireAuthenticatedUser(app.listMyDeliveriesHandler))
+	mux.HandleFunc("GET /v1/me/deliveries/{deliveryID}", app.requireAuthenticatedUser(app.showMyDeliveryHandler))
+	mux.HandleFunc("PATCH /v1/me/deliveries/{deliveryID}", app.requireAuthenticatedUser(app.updateMyDeliveryHandler))
+
 	return app.logRequest(app.matchRoute(mux, app.recoverPanic(app.secureHeaders(app.authenticate(app.jsonUnmatched(mux))))))
 }

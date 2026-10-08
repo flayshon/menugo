@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"menugo.flayshon.com/internal/data"
@@ -26,6 +27,9 @@ type publicOrderResponse struct {
 	PlacedAt         time.Time          `json:"placed_at"`
 	StatusHistory    []publicOrderEvent `json:"status_history"`
 	CanCancel        bool               `json:"can_cancel"`
+	// Driver is the first name of the driver while the order is assigned
+	// or on its way, so the customer knows who to expect.
+	Driver *string `json:"driver"`
 }
 
 type publicOrderVenue struct {
@@ -59,7 +63,15 @@ func newPublicOrderResponse(o *data.Order, r *data.Restaurant) publicOrderRespon
 		history = append(history, publicOrderEvent{h.To, h.Reason, h.At})
 	}
 
+	var driver *string
+	if dl := o.Delivery; dl != nil && dl.DriverName != "" &&
+		(dl.Status == data.DeliveryAssigned || dl.Status == data.DeliveryPickedUp) {
+		first, _, _ := strings.Cut(dl.DriverName, " ")
+		driver = &first
+	}
+
 	return publicOrderResponse{
+		Driver:           driver,
 		Status:           o.Status,
 		Fulfillment:      o.Fulfillment,
 		Restaurant:       publicOrderVenue{r.Slug, r.Name, r.Phone},

@@ -137,6 +137,8 @@ func (app *application) removeMemberHandler(w http.ResponseWriter, r *http.Reque
 		switch {
 		case errors.Is(err, data.ErrEditConflict):
 			app.editConflictResponse(w, r)
+		case errors.Is(err, data.ErrDriverBusy):
+			app.conflictResponse(w, r, driverBusyMessage)
 		default:
 			app.serverErrorResponse(w, r, err)
 		}
