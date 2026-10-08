@@ -19,3 +19,8 @@ TEST_DB_DSN=menugo_test:password@tcp(127.0.0.1:3306)/
 # DB_MAX_IDLE_TIME=15m
 # AUTH_TOKEN_TTL=24h
 # SHUTDOWN_TIMEOUT=30s
+# LIMITER_ENABLED=true
+# LIMITER_RPS=20
+# LIMITER_BURST=40
+# Only behind a reverse proxy that appends X-Forwarded-For:
+# TRUST_PROXY_HEADERS=false

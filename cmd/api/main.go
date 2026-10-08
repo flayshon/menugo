@@ -20,11 +20,12 @@ import (
 const version = "0.1.0"
 
 type application struct {
-	config config
-	logger *slog.Logger
-	db     *sql.DB
-	models data.Models
-	wg     sync.WaitGroup // tracks background goroutines for graceful shutdown
+	config   config
+	logger   *slog.Logger
+	db       *sql.DB
+	models   data.Models
+	limiters limiters
+	wg       sync.WaitGroup // tracks background goroutines for graceful shutdown
 }
 
 func main() {
@@ -80,10 +81,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	logger.Info("database connection pool established")
 
 	app := &application{
-		config: cfg,
-		logger: logger,
-		db:     db,
-		models: data.NewModels(db),
+		config:   cfg,
+		logger:   logger,
+		db:       db,
+		models:   data.NewModels(db),
+		limiters: newLimiters(cfg),
 	}
 
 	return app.serve(ctx)

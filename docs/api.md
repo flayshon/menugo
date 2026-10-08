@@ -37,6 +37,7 @@ Validation failures (`422 Unprocessable Entity`) map field names to messages:
 | 405 | Method not supported for this path (see the `Allow` header) |
 | 409 | Edit conflict (stale `version`) or duplicate |
 | 422 | Validation failed |
+| 429 | Rate limit exceeded; wait the number of seconds in `Retry-After` |
 | 500 | Unexpected server error (details are only in the server log) |
 
 **Roles.** Each user has a role in each restaurant they belong to:

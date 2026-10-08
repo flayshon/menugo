@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"menugo.flayshon.com/internal/data"
@@ -30,6 +31,11 @@ func (app *application) createAuthenticationTokenHandler(w http.ResponseWriter, 
 	v.Check(len(input.Password) <= 72, "password", "must not be more than 72 bytes long")
 	if !v.Valid() {
 		app.failedValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	// Limit attempts per account, whatever IP they come from.
+	if !app.allow(w, r, app.limiters.loginEmail, strings.ToLower(input.Email)) {
 		return
 	}
 

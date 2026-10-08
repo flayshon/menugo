@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -63,6 +64,16 @@ type response struct {
 // encode as JSON. token, if not empty, is sent as a bearer token.
 func (ts *testServer) do(t *testing.T, method, path, token string, body any) response {
 	t.Helper()
+	header := make(http.Header)
+	if token != "" {
+		header.Set("Authorization", "Bearer "+token)
+	}
+	return ts.doWithHeader(t, method, path, body, header)
+}
+
+// doWithHeader is like do, with arbitrary request headers.
+func (ts *testServer) doWithHeader(t *testing.T, method, path string, body any, header http.Header) response {
+	t.Helper()
 
 	var reqBody io.Reader
 	switch b := body.(type) {
@@ -81,9 +92,7 @@ func (ts *testServer) do(t *testing.T, method, path, token string, body any) res
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
+	maps.Copy(req.Header, header)
 
 	// Don't follow redirects, so tests see exactly what the API sent.
 	client := ts.Client()

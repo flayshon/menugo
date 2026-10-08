@@ -27,6 +27,7 @@ func (app *application) serve(ctx context.Context) error {
 	}
 
 	app.background(ctx, func(ctx context.Context) { app.cleanupExpiredTokens(ctx, tokenCleanupInterval) })
+	app.background(ctx, func(ctx context.Context) { app.cleanupLimiters(ctx, time.Minute) })
 
 	serverErr := make(chan error, 1)
 	go func() {

@@ -14,16 +14,16 @@ func (app *application) routes() http.Handler {
 	// Public, for customers: no authentication, callable from any website.
 	mux.HandleFunc("GET /v1/menus/{slug}", app.allowAnyOrigin(app.showPublicMenuHandler))
 	mux.HandleFunc("GET /v1/menus/{slug}/delivery-quote", app.allowAnyOrigin(app.deliveryQuoteHandler))
-	mux.HandleFunc("POST /v1/menus/{slug}/orders", app.allowAnyOrigin(app.createOrderHandler))
+	mux.HandleFunc("POST /v1/menus/{slug}/orders", app.allowAnyOrigin(app.limitByIP(app.limiters.publicWrite, app.createOrderHandler)))
 	mux.HandleFunc("OPTIONS /v1/menus/{slug}/orders", app.publicPreflightHandler)
 	mux.HandleFunc("GET /v1/tracking/{token}", app.allowAnyOrigin(app.showTrackedOrderHandler))
-	mux.HandleFunc("POST /v1/tracking/{token}/cancel", app.allowAnyOrigin(app.cancelTrackedOrderHandler))
+	mux.HandleFunc("POST /v1/tracking/{token}/cancel", app.allowAnyOrigin(app.limitByIP(app.limiters.publicWrite, app.cancelTrackedOrderHandler)))
 	mux.HandleFunc("OPTIONS /v1/tracking/{token}/cancel", app.publicPreflightHandler)
 
-	mux.HandleFunc("POST /v1/users", app.registerUserHandler)
+	mux.HandleFunc("POST /v1/users", app.limitByIP(app.limiters.auth, app.registerUserHandler))
 	mux.HandleFunc("GET /v1/users/me", app.requireAuthenticatedUser(app.showCurrentUserHandler))
 
-	mux.HandleFunc("POST /v1/tokens/authentication", app.createAuthenticationTokenHandler)
+	mux.HandleFunc("POST /v1/tokens/authentication", app.limitByIP(app.limiters.auth, app.createAuthenticationTokenHandler))
 	mux.HandleFunc("DELETE /v1/tokens/authentication", app.requireAuthenticatedUser(app.deleteAuthenticationTokenHandler))
 
 	mux.HandleFunc("POST /v1/restaurants", app.requireAuthenticatedUser(app.createRestaurantHandler))
@@ -83,5 +83,5 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("GET /v1/me/deliveries/{deliveryID}", app.requireAuthenticatedUser(app.showMyDeliveryHandler))
 	mux.HandleFunc("PATCH /v1/me/deliveries/{deliveryID}", app.requireAuthenticatedUser(app.updateMyDeliveryHandler))
 
-	return app.logRequest(app.matchRoute(mux, app.recoverPanic(app.secureHeaders(app.authenticate(app.jsonUnmatched(mux))))))
+	return app.logRequest(app.matchRoute(mux, app.recoverPanic(app.rateLimit(app.secureHeaders(app.authenticate(app.jsonUnmatched(mux)))))))
 }

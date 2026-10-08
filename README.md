@@ -69,6 +69,10 @@ Invalid settings stop the application at startup.
 | `DB_MAX_IDLE_TIME`  | `15m`         | How long an idle connection is kept              |
 | `AUTH_TOKEN_TTL`    | `24h`         | Lifetime of authentication tokens                |
 | `SHUTDOWN_TIMEOUT`  | `30s`         | Time allowed for in-flight requests on shutdown  |
+| `LIMITER_ENABLED`   | `true`        | Rate limiting on or off                          |
+| `LIMITER_RPS`       | `20`          | General limit: requests per second per client IP |
+| `LIMITER_BURST`     | `40`          | General limit: burst per client IP               |
+| `TRUST_PROXY_HEADERS` | `false`     | Take the client IP from the last `X-Forwarded-For` entry. Enable **only** behind a reverse proxy that appends it; otherwise clients can spoof their IP. |
 | `TEST_DB_DSN`       | *(unset)*     | Tests only; see below                            |
 
 Whatever the DSN says, the application always connects with `parseTime`, UTC
@@ -163,14 +167,19 @@ docs/               API reference
   item in another restaurant's category.
 - **Money and time.** Amounts are integer minor units (`price_cents BIGINT`);
   JSON decimals are rejected. Times are `DATETIME(6)` in UTC.
-- **Dependencies.** `github.com/go-sql-driver/mysql` and `golang.org/x/crypto`
-  (bcrypt). Everything else is the standard library, including routing
-  (`http.ServeMux` patterns) and migrations.
+- **Rate limiting.** Token buckets per client IP for all requests
+  (configurable), plus fixed, stricter limits for registering and logging in
+  (10/min per IP), login attempts per email from any IP (10 per 15 min), and
+  placing or cancelling public orders (20/min per IP). Over the limit is `429`
+  with `Retry-After`. State is in memory, per instance: running several
+  instances needs a shared store (e.g. Redis) or sticky load balancing.
+- **Dependencies.** `github.com/go-sql-driver/mysql`, `golang.org/x/crypto`
+  (bcrypt) and `golang.org/x/time/rate` (rate limiting). Everything else is
+  the standard library, including routing (`http.ServeMux` patterns) and
+  migrations.
 
 ### Not done yet
 
-- Rate limiting, especially on login and public order placement (planned
-  before production).
 - Opening hours: a published restaurant currently accepts orders at any time.
 - Saved customer addresses: each order carries its own address for now.
 - CORS for the authenticated API, for when a management front end is on

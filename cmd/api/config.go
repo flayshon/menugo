@@ -22,7 +22,16 @@ type config struct {
 	auth struct {
 		tokenTTL time.Duration
 	}
-	shutdownTimeout time.Duration
+	limiter struct {
+		enabled bool
+		rps     float64
+		burst   int
+	}
+	// trustProxyHeaders makes the client IP the last address in
+	// X-Forwarded-For, as appended by a reverse proxy in front of the API.
+	// Only enable it behind such a proxy: otherwise clients can spoof it.
+	trustProxyHeaders bool
+	shutdownTimeout   time.Duration
 }
 
 var environments = []string{"development", "staging", "production"}
@@ -51,6 +60,28 @@ func parseConfig(args []string, getenv func(string) string) (config, error) {
 		}
 		return n
 	}
+	envFloat := func(key string, fallback float64) float64 {
+		s := getenv(key)
+		if s == "" {
+			return fallback
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s must be a number", key))
+		}
+		return f
+	}
+	envBool := func(key string, fallback bool) bool {
+		s := getenv(key)
+		if s == "" {
+			return fallback
+		}
+		b, err := strconv.ParseBool(s)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s must be true or false", key))
+		}
+		return b
+	}
 	envDuration := func(key string, fallback time.Duration) time.Duration {
 		s := getenv(key)
 		if s == "" {
@@ -75,6 +106,10 @@ func parseConfig(args []string, getenv func(string) string) (config, error) {
 	fs.DurationVar(&cfg.db.maxIdleTime, "db-max-idle-time", envDuration("DB_MAX_IDLE_TIME", 15*time.Minute), "maximum connection idle time (DB_MAX_IDLE_TIME)")
 
 	fs.DurationVar(&cfg.auth.tokenTTL, "auth-token-ttl", envDuration("AUTH_TOKEN_TTL", 24*time.Hour), "authentication token lifetime (AUTH_TOKEN_TTL)")
+	fs.BoolVar(&cfg.limiter.enabled, "limiter-enabled", envBool("LIMITER_ENABLED", true), "enable rate limiting (LIMITER_ENABLED)")
+	fs.Float64Var(&cfg.limiter.rps, "limiter-rps", envFloat("LIMITER_RPS", 20), "requests per second per client IP (LIMITER_RPS)")
+	fs.IntVar(&cfg.limiter.burst, "limiter-burst", envInt("LIMITER_BURST", 40), "request burst per client IP (LIMITER_BURST)")
+	fs.BoolVar(&cfg.trustProxyHeaders, "trust-proxy-headers", envBool("TRUST_PROXY_HEADERS", false), "take client IPs from X-Forwarded-For (TRUST_PROXY_HEADERS)")
 	fs.DurationVar(&cfg.shutdownTimeout, "shutdown-timeout", envDuration("SHUTDOWN_TIMEOUT", 30*time.Second), "graceful shutdown timeout (SHUTDOWN_TIMEOUT)")
 
 	if err := fs.Parse(args); err != nil {
@@ -101,6 +136,9 @@ func parseConfig(args []string, getenv func(string) string) (config, error) {
 	}
 	if cfg.auth.tokenTTL < time.Minute {
 		errs = append(errs, errors.New("auth token TTL must be at least 1m"))
+	}
+	if cfg.limiter.enabled && (cfg.limiter.rps <= 0 || cfg.limiter.burst < 1) {
+		errs = append(errs, errors.New("limiter rps must be positive and burst at least 1"))
 	}
 	if cfg.shutdownTimeout <= 0 {
 		errs = append(errs, errors.New("shutdown timeout must be positive"))
