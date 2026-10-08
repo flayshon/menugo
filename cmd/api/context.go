@@ -14,6 +14,7 @@ const (
 	requestInfoContextKey = contextKey("requestInfo")
 	userContextKey        = contextKey("user")
 	membershipContextKey  = contextKey("membership")
+	authHashContextKey    = contextKey("authHash")
 )
 
 // requestInfo collects facts about a request for the request log. The logging
@@ -81,4 +82,19 @@ func (app *application) contextGetMembership(r *http.Request) *data.Membership {
 		panic("missing membership value in request context")
 	}
 	return ms
+}
+
+// contextSetAuthHash records the hash of the authentication token behind the
+// request: from the Authorization header, or the one a stream ticket was
+// issued from.
+func (app *application) contextSetAuthHash(r *http.Request, hash []byte) *http.Request {
+	ctx := context.WithValue(r.Context(), authHashContextKey, hash)
+	return r.WithContext(ctx)
+}
+
+// contextGetAuthHash returns the hash set by contextSetAuthHash, or nil for
+// anonymous requests.
+func (app *application) contextGetAuthHash(r *http.Request) []byte {
+	hash, _ := r.Context().Value(authHashContextKey).([]byte)
+	return hash
 }

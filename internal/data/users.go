@@ -2,7 +2,6 @@ package data
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -165,10 +164,13 @@ func (m UserModel) getBy(ctx context.Context, where string, arg any) (*User, err
 // GetForToken returns the user owning an unexpired token with the given scope
 // and plaintext.
 func (m UserModel) GetForToken(ctx context.Context, scope, tokenPlaintext string) (*User, error) {
+	return m.GetForTokenHash(ctx, scope, TokenHash(tokenPlaintext))
+}
+
+// GetForTokenHash is GetForToken for a token's hash.
+func (m UserModel) GetForTokenHash(ctx context.Context, scope string, hash []byte) (*User, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
-
-	hash := sha256.Sum256([]byte(tokenPlaintext))
 
 	query := `
 		SELECT u.id, u.name, u.email, u.password_hash, u.version, u.created_at, u.updated_at
@@ -177,7 +179,7 @@ func (m UserModel) GetForToken(ctx context.Context, scope, tokenPlaintext string
 		WHERE t.hash = ? AND t.scope = ? AND t.expiry > ?`
 
 	var user User
-	err := m.DB.QueryRowContext(ctx, query, hash[:], scope, now()).Scan(
+	err := m.DB.QueryRowContext(ctx, query, hash, scope, now()).Scan(
 		&user.ID, &user.Name, &user.Email, &user.Password.hash,
 		&user.Version, &user.CreatedAt, &user.UpdatedAt,
 	)

@@ -430,10 +430,29 @@ For every stream:
 - Authenticated streams re-check access every minute and end with
   `event: end` (`{"reason": "access revoked"}`) after logout, token expiry or
   removal from the restaurant. Don't reconnect after that.
-- Authenticated streams take the usual `Authorization: Bearer` header. The
-  browser's built-in `EventSource` can't send headers, so web clients use a
-  fetch-based SSE client (e.g. `@microsoft/fetch-event-source`); mobile
-  clients can set the header directly.
+- Authenticated streams take the usual `Authorization: Bearer` header, or a
+  **stream ticket** in the URL (`?ticket=...`), for clients that can't send
+  headers, like the browser's built-in `EventSource`.
+
+### Stream tickets
+
+`POST /v1/tokens/stream`, with the usual `Authorization` header, returns:
+
+```json
+{"stream_ticket": {"ticket": "Q4X6J2...", "expiry": "2026-10-08T21:01:58Z"}}
+```
+
+Open one stream with it: `new EventSource(url + "?ticket=" + ticket)`.
+
+- A ticket is valid for one minute (never longer than the login token it
+  came from) and works **once**. It can't be used for anything but opening
+  a stream.
+- The stream then behaves as if opened with your login token: logging out
+  ends it, and unused tickets are deleted.
+- Because tickets are single-use, `EventSource`'s automatic reconnection
+  can't reuse the URL. On `error`, close the `EventSource`, get a new ticket
+  and open a new one; for the restaurant stream, pass the last event ID you
+  received as `?last_event_id=` to catch up.
 
 ### `GET /v1/restaurants/{restaurantID}/events`
 
@@ -441,8 +460,8 @@ Staff and up. Everything that happens to the restaurant's orders, as small
 messages (`order_id`, `order_status`, `driver_user_id`, `at`); fetch
 details through the REST API. Each message has an `id`: on reconnect, send
 the last one as `Last-Event-ID` (EventSource-style clients do this
-automatically) and the stream first replays what you missed, up to 1000
-events from the last 24 hours. Without it, reload your order list on
+automatically) or `?last_event_id=` and the stream first replays what you
+missed, up to 1000 events from the last 24 hours. Without it, reload your order list on
 connect.
 
 ### `GET /v1/tracking/{token}/events`

@@ -246,11 +246,11 @@ func (app *application) stream(r *http.Request, sse *sseWriter, sub *events.Subs
 	}
 }
 
-// tokenStillValid re-checks the request's bearer token, for long-lived
-// streams: a logged-out or expired token ends the stream.
+// tokenStillValid re-checks the authentication token behind the request
+// (sent directly, or through a stream ticket), for long-lived streams: a
+// logged-out or expired token ends the stream.
 func (app *application) tokenStillValid(ctx context.Context, r *http.Request) (*data.User, bool) {
-	token, _, _ := bearerToken(r)
-	user, err := app.models.Users.GetForToken(ctx, data.ScopeAuthentication, token)
+	user, err := app.models.Users.GetForTokenHash(ctx, data.ScopeAuthentication, app.contextGetAuthHash(r))
 	return user, err == nil
 }
 
@@ -268,11 +268,17 @@ type restaurantEvent struct {
 func (app *application) restaurantEventsHandler(w http.ResponseWriter, r *http.Request) {
 	ms := app.contextGetMembership(r)
 
+	// EventSource sends Last-Event-ID itself when it reconnects; clients
+	// opening a new stream (e.g. with a fresh ticket) can use the query.
 	var lastID int64
-	if s := r.Header.Get("Last-Event-ID"); s != "" {
+	s := r.Header.Get("Last-Event-ID")
+	if s == "" {
+		s = r.URL.Query().Get("last_event_id")
+	}
+	if s != "" {
 		id, err := strconv.ParseInt(s, 10, 64)
 		if err != nil || id < 0 {
-			app.badRequestResponse(w, r, errors.New("invalid Last-Event-ID header"))
+			app.badRequestResponse(w, r, errors.New("invalid Last-Event-ID"))
 			return
 		}
 		lastID = id

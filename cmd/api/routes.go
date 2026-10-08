@@ -26,6 +26,7 @@ func (app *application) routes() http.Handler {
 
 	mux.HandleFunc("POST /v1/tokens/authentication", app.limitByIP(app.limiters.auth, app.createAuthenticationTokenHandler))
 	mux.HandleFunc("DELETE /v1/tokens/authentication", app.requireAuthenticatedUser(app.deleteAuthenticationTokenHandler))
+	mux.HandleFunc("POST /v1/tokens/stream", app.requireAuthenticatedUser(app.createStreamTicketHandler))
 
 	mux.HandleFunc("POST /v1/restaurants", app.requireAuthenticatedUser(app.createRestaurantHandler))
 	mux.HandleFunc("GET /v1/restaurants", app.requireAuthenticatedUser(app.listRestaurantsHandler))
@@ -90,8 +91,9 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("PUT /v1/restaurants/{restaurantID}/accepting-orders", app.requireRestaurantRole(data.StaffRoles, app.setAcceptingOrdersHandler))
 
 	// Real-time events (server-sent events).
-	mux.HandleFunc("GET /v1/restaurants/{restaurantID}/events", app.requireRestaurantRole(data.StaffRoles, app.restaurantEventsHandler))
-	mux.HandleFunc("GET /v1/me/events", app.requireAuthenticatedUser(app.myEventsHandler))
+	// Authenticated streams also accept a stream ticket (?ticket=).
+	mux.HandleFunc("GET /v1/restaurants/{restaurantID}/events", app.acceptStreamTicket(app.requireRestaurantRole(data.StaffRoles, app.restaurantEventsHandler)))
+	mux.HandleFunc("GET /v1/me/events", app.acceptStreamTicket(app.requireAuthenticatedUser(app.myEventsHandler)))
 
 	return app.logRequest(app.matchRoute(mux, app.recoverPanic(app.rateLimit(app.secureHeaders(app.authenticate(app.jsonUnmatched(mux)))))))
 }

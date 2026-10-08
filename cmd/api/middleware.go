@@ -151,9 +151,63 @@ func (app *application) authenticate(next http.Handler) http.Handler {
 
 		app.contextGetRequestInfo(r).userID = user.ID
 		r = app.contextSetUser(r, user)
+		r = app.contextSetAuthHash(r, data.TokenHash(token))
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// acceptStreamTicket lets a stream route be opened with ?ticket= instead of
+// an Authorization header, for clients that can't send headers (a browser's
+// EventSource). The ticket is used up; the request then counts as made with
+// the authentication token the ticket was issued from.
+func (app *application) acceptStreamTicket(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ticket := r.URL.Query().Get("ticket")
+		if ticket == "" {
+			next(w, r)
+			return
+		}
+
+		if !app.contextGetUser(r).IsAnonymous() {
+			app.badRequestResponse(w, r, errors.New("send either an Authorization header or a ticket, not both"))
+			return
+		}
+
+		v := validator.New()
+		if data.ValidateTokenPlaintext(v, ticket); !v.Valid() {
+			app.invalidAuthenticationTokenResponse(w, r)
+			return
+		}
+
+		parentHash, err := app.models.Tokens.ConsumeStreamTicket(r.Context(), ticket)
+		if err != nil {
+			switch {
+			case errors.Is(err, data.ErrRecordNotFound):
+				app.invalidAuthenticationTokenResponse(w, r)
+			default:
+				app.serverErrorResponse(w, r, err)
+			}
+			return
+		}
+
+		user, err := app.models.Users.GetForTokenHash(r.Context(), data.ScopeAuthentication, parentHash)
+		if err != nil {
+			switch {
+			case errors.Is(err, data.ErrRecordNotFound):
+				app.invalidAuthenticationTokenResponse(w, r)
+			default:
+				app.serverErrorResponse(w, r, err)
+			}
+			return
+		}
+
+		app.contextGetRequestInfo(r).userID = user.ID
+		r = app.contextSetUser(r, user)
+		r = app.contextSetAuthHash(r, parentHash)
+
+		next(w, r)
+	}
 }
 
 func (app *application) requireAuthenticatedUser(next http.HandlerFunc) http.HandlerFunc {

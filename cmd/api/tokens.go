@@ -91,3 +91,30 @@ func (app *application) deleteAuthenticationTokenHandler(w http.ResponseWriter, 
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// createStreamTicketHandler issues a stream ticket: a token that opens one
+// event stream with ?ticket=, for clients that can't send an Authorization
+// header. It is valid for a minute, works once, and lasts no longer than the
+// authentication token used to get it.
+func (app *application) createStreamTicketHandler(w http.ResponseWriter, r *http.Request) {
+	ticket, err := app.models.Tokens.NewStreamTicket(r.Context(), app.contextGetAuthHash(r))
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.invalidAuthenticationTokenResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	resp := struct {
+		Ticket string    `json:"ticket"`
+		Expiry time.Time `json:"expiry"`
+	}{ticket.Plaintext, ticket.Expiry}
+
+	err = app.writeJSON(w, http.StatusCreated, envelope{"stream_ticket": resp}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
