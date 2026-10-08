@@ -28,6 +28,8 @@ type Models struct {
 	Memberships MembershipModel
 	Categories  CategoryModel
 	MenuItems   MenuItemModel
+	Zones       DeliveryZoneModel
+	Orders      OrderModel
 }
 
 func NewModels(db *sql.DB) Models {
@@ -38,6 +40,8 @@ func NewModels(db *sql.DB) Models {
 		Memberships: MembershipModel{DB: db},
 		Categories:  CategoryModel{DB: db},
 		MenuItems:   MenuItemModel{DB: db},
+		Zones:       DeliveryZoneModel{DB: db},
+		Orders:      OrderModel{DB: db},
 	}
 }
 

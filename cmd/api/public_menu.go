@@ -47,24 +47,10 @@ type publicCategory struct {
 // out items are included with "is_available": false, so customers see them
 // but can't order them.
 func (app *application) showPublicMenuHandler(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	if !validator.MaxChars(slug, 63) || !validator.Matches(slug, validator.SlugRX) {
-		app.notFoundResponse(w, r)
+	restaurant := app.getPublishedRestaurant(w, r)
+	if restaurant == nil {
 		return
 	}
-
-	restaurant, err := app.models.Restaurants.GetPublishedBySlug(r.Context(), slug)
-	if err != nil {
-		switch {
-		case errors.Is(err, data.ErrRecordNotFound):
-			app.notFoundResponse(w, r)
-		default:
-			app.serverErrorResponse(w, r, err)
-		}
-		return
-	}
-
-	app.contextGetRequestInfo(r).restaurantID = restaurant.ID
 
 	categories, err := app.models.Categories.List(r.Context(), restaurant.ID)
 	if err != nil {
@@ -117,14 +103,36 @@ func (app *application) showPublicMenuHandler(w http.ResponseWriter, r *http.Req
 		"categories": menu,
 	}
 
-	// The menu is public and never depends on who's asking, so any web page
-	// may fetch it and caches may keep it briefly.
+	// The menu never depends on who's asking, so caches may keep it briefly.
 	headers := make(http.Header)
 	headers.Set("Cache-Control", "public, max-age="+publicMenuMaxAge)
-	headers.Set("Access-Control-Allow-Origin", "*")
 
 	err = app.writeJSON(w, http.StatusOK, envelope{"menu": env}, headers)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}
+}
+
+// getPublishedRestaurant loads the published restaurant in the {slug} path
+// parameter. If it can't, it writes a 404 (or 500) and returns nil.
+func (app *application) getPublishedRestaurant(w http.ResponseWriter, r *http.Request) *data.Restaurant {
+	slug := r.PathValue("slug")
+	if !validator.MaxChars(slug, 63) || !validator.Matches(slug, validator.SlugRX) {
+		app.notFoundResponse(w, r)
+		return nil
+	}
+
+	restaurant, err := app.models.Restaurants.GetPublishedBySlug(r.Context(), slug)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return nil
+	}
+
+	app.contextGetRequestInfo(r).restaurantID = restaurant.ID
+	return restaurant
 }

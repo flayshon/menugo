@@ -41,7 +41,7 @@ Validation failures (`422 Unprocessable Entity`) map field names to messages:
 
 **Roles.** Each user has a role in each restaurant they belong to:
 
-| Role | View restaurant | Update restaurant | Delete restaurant | Manage members | View menu | Edit menu | Mark items sold out |
+| Role | View restaurant | Update restaurant | Delete restaurant | Manage members | View menu & zones | Edit menu & zones | Mark items sold out |
 |------|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
 | `restaurant_owner` | ✓ | ✓ | ✓ | admins, staff, drivers | ✓ | ✓ | ✓ |
 | `restaurant_admin` | ✓ | ✓ |   | staff, drivers | ✓ | ✓ | ✓ |
@@ -97,6 +97,152 @@ the restaurant isn't published** (the two are indistinguishable).
   }
 }
 ```
+
+### `GET /v1/menus/{slug}/delivery-quote?postal_code=...`
+
+No authentication. Whether the restaurant delivers to a postal code, and on
+what terms. Use it before checkout.
+
+```json
+{"delivery_quote": {"postal_code": "50030230", "fee_cents": 800, "min_order_cents": 5000, "currency": "BRL"}}
+```
+
+`422` with `{"error": {"postal_code": "..."}}` if the restaurant doesn't
+deliver there.
+
+## Ordering (customers)
+
+Customers don't need an account. These endpoints allow any origin, including
+the CORS preflight for `POST`, so a storefront on any domain can use them.
+
+### `POST /v1/menus/{slug}/orders`: place an order
+
+```json
+{
+  "fulfillment": "delivery",
+  "customer": {"name": "Ana Souza", "phone": "+55 81 99999-0000", "email": ""},
+  "address": {"line": "Rua da Aurora, 100", "details": "apto 12", "city": "Recife", "postal_code": "50030-230"},
+  "items": [
+    {"item_id": 1, "quantity": 1, "notes": "no olives"},
+    {"item_id": 2, "quantity": 2}
+  ],
+  "notes": "ring the bell",
+  "expected_total_cents": 6500
+}
+```
+
+| Field | Rules |
+|-------|-------|
+| `fulfillment` | `delivery` or `pickup` |
+| `customer.name` | required, ≤ 100 characters |
+| `customer.phone` | required; spaces and punctuation are ignored; 8–15 digits, optional leading `+` |
+| `customer.email` | optional, valid |
+| `address` | required for delivery (`line`, `city`, `postal_code` required; `details` optional); must be absent for pickup |
+| `items` | 1–50 lines; `quantity` 1–99; `notes` ≤ 200 characters. The same item may appear on several lines. |
+| `notes` | ≤ 500 characters |
+| `expected_total_cents` | optional: the total the customer was shown. If the real total differs (e.g. a price changed), nothing is ordered and you get `409` with the current `total_cents`. |
+
+**Prices are never taken from the request.** Unit prices come from the menu,
+the delivery fee from the delivery zone covering the postal code, and the
+total is computed by the server. Sending a price field is a `400`.
+
+`201 Created`:
+
+```json
+{
+  "order": {
+    "status": "pending",
+    "fulfillment": "delivery",
+    "restaurant": {"slug": "pizza", "name": "Pizza Place", "phone": ""},
+    "items": [
+      {"name": "Pizza", "quantity": 1, "unit_price_cents": 4500, "line_total_cents": 4500, "notes": "no olives"},
+      {"name": "Soda", "quantity": 2, "unit_price_cents": 600, "line_total_cents": 1200, "notes": ""}
+    ],
+    "subtotal_cents": 5700,
+    "delivery_fee_cents": 800,
+    "total_cents": 6500,
+    "currency": "BRL",
+    "notes": "ring the bell",
+    "placed_at": "2026-10-08T19:20:56.2Z",
+    "status_history": [{"status": "pending", "at": "2026-10-08T19:20:56.2Z"}],
+    "can_cancel": true
+  },
+  "tracking_token": "LQ6TQ6Y3K5Q5ZJ2D3OQ6YVNF5E"
+}
+```
+
+The `tracking_token` is shown **only once**: the server stores only its hash.
+Give it to the customer (e.g. as a link to your tracking page). Customer
+details and the address are not included in this response or in tracking,
+since tracking links tend to get shared.
+
+Errors (`422` unless stated):
+
+| Case | Field |
+|------|-------|
+| Item missing, from another restaurant, in a hidden category, or sold out | `items[i].item_id` |
+| No active zone covers the postal code | `address.postal_code` |
+| Subtotal below the zone's minimum | `items` |
+| Restaurant not published | `404` |
+| `expected_total_cents` differs | `409`, body includes `total_cents` |
+
+### `GET /v1/tracking/{token}`
+
+The order, as above (without `tracking_token`). `404` for unknown tokens.
+Orders stay trackable even if the restaurant is later unpublished.
+
+### `POST /v1/tracking/{token}/cancel`
+
+Cancels the order if the restaurant hasn't confirmed it yet (`can_cancel` is
+`true`). `200` with the updated order; `409` once it can no longer be
+cancelled by the customer.
+
+### Order lifecycle
+
+```
+delivery: pending → confirmed → preparing → ready_for_delivery → out_for_delivery → delivered
+pickup:   pending → confirmed → preparing → ready_for_pickup  → picked_up
+```
+
+Any other move is rejected. The restaurant can cancel until a delivery order
+is `out_for_delivery` (pickup orders: until `picked_up`). Customers can only
+cancel while the order is `pending`. Every change is recorded with who made it
+and when.
+
+## Delivery zones
+
+Under `/v1/restaurants/{restaurantID}/delivery-zones`. A zone:
+
+```json
+{
+  "id": 1, "name": "Centro", "fee_cents": 800, "min_order_cents": 5000, "is_active": true,
+  "postal_codes": ["50030", "50040000"],
+  "version": 1, "created_at": "...", "updated_at": "..."
+}
+```
+
+| Field | Rules |
+|-------|-------|
+| `name` | required, ≤ 100 characters, unique within the restaurant |
+| `fee_cents` | required, 0–10,000,000 (0 = free delivery) |
+| `min_order_cents` | default 0. Minimum subtotal (before the fee). |
+| `is_active` | default `true` |
+| `postal_codes` | 1–1000 entries. Spaces and punctuation are removed and letters uppercased (`"50030-230"` → `"50030230"`); each entry must then have 2–10 letters or digits. |
+
+**How postal codes match.** Each entry matches every postal code that starts
+with it: `"50030"` covers `50030-000` to `50030-999`, and a full code covers
+just itself. If several entries match, the **longest** decides, so you can
+carve exceptions out of a large area with a more specific zone. If that zone
+is inactive, the address isn't delivered to. An entry can only belong to one
+zone per restaurant (`422` naming the entry otherwise).
+
+| Method and path | Who | Result |
+|-----------------|-----|--------|
+| `GET /delivery-zones` | staff and up | `200` `{"delivery_zones": [...]}` by name |
+| `POST /delivery-zones` | owners, admins | `201` `{"delivery_zone": {...}}` with `Location` |
+| `GET /delivery-zones/{zoneID}` | staff and up | `200` |
+| `PATCH /delivery-zones/{zoneID}` | owners, admins | `200`; partial update; `postal_codes`, if sent, replaces the whole list; optional `version` |
+| `DELETE /delivery-zones/{zoneID}` | owners, admins | `204`. Existing orders keep their address and fee. |
 
 ## Users and authentication
 

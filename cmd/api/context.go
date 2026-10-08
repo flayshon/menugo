@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"menugo.flayshon.com/internal/data"
 )
@@ -20,8 +21,19 @@ const (
 // restaurant once they are known.
 type requestInfo struct {
 	id           string
+	route        string // the matched ServeMux pattern, e.g. "GET /v1/menus/{slug}"
 	userID       int64
 	restaurantID int64
+}
+
+// logPath returns the request path to log. Paths of routes with a {token}
+// parameter carry a secret, so for those the route pattern is logged instead.
+func (info *requestInfo) logPath(r *http.Request) string {
+	if strings.Contains(info.route, "{token}") {
+		_, path, _ := strings.Cut(info.route, " ")
+		return path
+	}
+	return r.URL.Path
 }
 
 func (app *application) contextSetRequestInfo(r *http.Request, info *requestInfo) *http.Request {

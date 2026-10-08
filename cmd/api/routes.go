@@ -11,8 +11,14 @@ func (app *application) routes() http.Handler {
 
 	mux.HandleFunc("GET /v1/healthcheck", app.healthcheckHandler)
 
-	// Public, for customers: no authentication.
-	mux.HandleFunc("GET /v1/menus/{slug}", app.showPublicMenuHandler)
+	// Public, for customers: no authentication, callable from any website.
+	mux.HandleFunc("GET /v1/menus/{slug}", app.allowAnyOrigin(app.showPublicMenuHandler))
+	mux.HandleFunc("GET /v1/menus/{slug}/delivery-quote", app.allowAnyOrigin(app.deliveryQuoteHandler))
+	mux.HandleFunc("POST /v1/menus/{slug}/orders", app.allowAnyOrigin(app.createOrderHandler))
+	mux.HandleFunc("OPTIONS /v1/menus/{slug}/orders", app.publicPreflightHandler)
+	mux.HandleFunc("GET /v1/tracking/{token}", app.allowAnyOrigin(app.showTrackedOrderHandler))
+	mux.HandleFunc("POST /v1/tracking/{token}/cancel", app.allowAnyOrigin(app.cancelTrackedOrderHandler))
+	mux.HandleFunc("OPTIONS /v1/tracking/{token}/cancel", app.publicPreflightHandler)
 
 	mux.HandleFunc("POST /v1/users", app.registerUserHandler)
 	mux.HandleFunc("GET /v1/users/me", app.requireAuthenticatedUser(app.showCurrentUserHandler))
@@ -47,5 +53,13 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("DELETE /v1/restaurants/{restaurantID}/menu/items/{itemID}", app.requireRestaurantRole(data.ManagerRoles, app.deleteMenuItemHandler))
 	mux.HandleFunc("PUT /v1/restaurants/{restaurantID}/menu/items/{itemID}/availability", app.requireRestaurantRole(data.StaffRoles, app.setMenuItemAvailabilityHandler))
 
-	return app.logRequest(app.recoverPanic(app.secureHeaders(app.authenticate(app.jsonUnmatched(mux)))))
+	// Delivery zones. Staff can see them (to answer customers); owners and
+	// admins manage them.
+	mux.HandleFunc("GET /v1/restaurants/{restaurantID}/delivery-zones", app.requireRestaurantRole(data.StaffRoles, app.listZonesHandler))
+	mux.HandleFunc("POST /v1/restaurants/{restaurantID}/delivery-zones", app.requireRestaurantRole(data.ManagerRoles, app.createZoneHandler))
+	mux.HandleFunc("GET /v1/restaurants/{restaurantID}/delivery-zones/{zoneID}", app.requireRestaurantRole(data.StaffRoles, app.showZoneHandler))
+	mux.HandleFunc("PATCH /v1/restaurants/{restaurantID}/delivery-zones/{zoneID}", app.requireRestaurantRole(data.ManagerRoles, app.updateZoneHandler))
+	mux.HandleFunc("DELETE /v1/restaurants/{restaurantID}/delivery-zones/{zoneID}", app.requireRestaurantRole(data.ManagerRoles, app.deleteZoneHandler))
+
+	return app.logRequest(app.matchRoute(mux, app.recoverPanic(app.secureHeaders(app.authenticate(app.jsonUnmatched(mux))))))
 }

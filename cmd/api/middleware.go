@@ -77,7 +77,7 @@ func (app *application) logRequest(next http.Handler) http.Handler {
 			attrs := []any{
 				"request_id", info.id,
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", info.logPath(r),
 				"status", rec.status,
 				"duration", time.Since(start),
 			}
@@ -206,6 +206,16 @@ func (app *application) requireRestaurantRole(roles []data.Role, next http.Handl
 	})
 }
 
+// matchRoute records which route the request matches, before any other
+// middleware can respond, so that the request log never contains a secret
+// from the path (see requestInfo.logPath).
+func (app *application) matchRoute(mux *http.ServeMux, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, app.contextGetRequestInfo(r).route = mux.Handler(r)
+		next.ServeHTTP(w, r)
+	})
+}
+
 // discardResponse records what a handler would have sent, without sending it.
 type discardResponse struct {
 	header http.Header
@@ -251,4 +261,25 @@ func (app *application) jsonUnmatched(mux *http.ServeMux) http.Handler {
 			w.WriteHeader(resp.status)
 		}
 	})
+}
+
+// allowAnyOrigin lets web pages on any origin call a public endpoint. It's
+// only for endpoints that use no credentials (no Authorization header, no
+// cookies), so there is nothing a malicious page could abuse.
+func (app *application) allowAnyOrigin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		next(w, r)
+	}
+}
+
+// publicPreflightHandler answers CORS preflight requests for public
+// endpoints. Browsers send one before a cross-origin POST with a JSON body.
+func (app *application) publicPreflightHandler(w http.ResponseWriter, r *http.Request) {
+	h := w.Header()
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Access-Control-Allow-Methods", "GET, POST")
+	h.Set("Access-Control-Allow-Headers", "Content-Type")
+	h.Set("Access-Control-Max-Age", "600")
+	w.WriteHeader(http.StatusNoContent)
 }

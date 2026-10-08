@@ -7,9 +7,10 @@ drivers.
 Written in Go with the standard library (`net/http`, `database/sql`,
 `log/slog`) and MariaDB, in the style of Alex Edwards' *Let's Go Further*.
 
-**Status:** Phase 3. Users, authentication, restaurants, membership/roles,
-menu management (categories and items) and the public menu are implemented.
-Orders, delivery zones, drivers and deliveries come in later phases.
+**Status:** Phase 4. Users, authentication, restaurants, membership/roles,
+menu management, the public menu, delivery zones and customer ordering
+(delivery and pickup, with tracking and cancellation) are implemented. Order
+management for restaurant staff, drivers and deliveries come in later phases.
 
 API reference: [docs/api.md](docs/api.md).
 
@@ -133,6 +134,15 @@ docs/               API reference
   deleted hourly. Passwords use bcrypt (cost 12). Logins for unknown emails
   still run a bcrypt comparison, so response times don't reveal which emails
   are registered.
+- **Orders.** The server prices every order from the menu and delivery zone;
+  clients can't send prices. Everything about an order (customer details,
+  address, item names and prices, fee) is copied into it, so menu or zone
+  changes never alter placed orders. Placing an order is one transaction.
+  Status changes go through one state machine (`internal/data/orderstatus.go`),
+  lock the order row, and are recorded in `order_status_history`.
+- **Customer tracking.** Customers get a random tracking token; only its hash
+  is stored. Tracking responses leave out the customer's contact details and
+  address. Request logs show `/v1/tracking/{token}` instead of the real path.
 - **Responses.** Handlers return dedicated response structs, never database
   models. Errors are always `{"error": …}`; validation errors map field names
   to messages.
@@ -152,7 +162,10 @@ docs/               API reference
 
 ### Not done yet
 
-- Rate limiting, especially on login (planned before production).
+- Rate limiting, especially on login and public order placement (planned
+  before production).
+- Opening hours: a published restaurant currently accepts orders at any time.
+- Saved customer addresses: each order carries its own address for now.
 - CORS for the authenticated API, for when a management front end is on
   another origin. (The public menu already allows any origin.)
 - Email verification and password reset (needs a mailer).

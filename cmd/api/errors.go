@@ -10,7 +10,7 @@ func (app *application) logError(r *http.Request, err error) {
 	app.logger.Error(err.Error(),
 		"request_id", info.id,
 		"method", r.Method,
-		"path", r.URL.Path,
+		"path", info.logPath(r),
 	)
 }
 
