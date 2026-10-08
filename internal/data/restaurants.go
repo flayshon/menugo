@@ -28,11 +28,14 @@ type Restaurant struct {
 	City        string
 	PostalCode  string
 	Currency    string
+	Timezone    string // IANA name; opening hours are in this zone
 	// IsPublished makes the restaurant's menu visible to the public.
 	IsPublished bool
-	Version     int32
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// AcceptingOrders pauses ordering when false, whatever the opening hours.
+	AcceptingOrders bool
+	Version         int32
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // RestaurantWithRole is a restaurant as seen by one of its members.
@@ -66,6 +69,18 @@ func ValidateRestaurant(v *validator.Validator, r *Restaurant) {
 
 	v.Check(r.Currency != "", "currency", "must be provided")
 	v.Check(validator.PermittedValue(r.Currency, SupportedCurrencies...), "currency", "is not a supported currency")
+
+	ValidateTimezone(v, r.Timezone)
+}
+
+// Location returns the restaurant's time zone. Timezone is validated when
+// saved, so this only falls back to UTC if the time zone database changed.
+func (r *Restaurant) Location() *time.Location {
+	loc, err := time.LoadLocation(r.Timezone)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
 }
 
 type RestaurantModel struct {
@@ -73,14 +88,14 @@ type RestaurantModel struct {
 }
 
 const restaurantColumns = `id, slug, name, description, phone, email, address_line, city, postal_code,
-	currency, is_published, version, created_at, updated_at`
+	currency, timezone, is_published, accepting_orders, version, created_at, updated_at`
 
 // scanRestaurant scans restaurantColumns, followed by any extra destinations.
 func scanRestaurant(row interface{ Scan(...any) error }, extra ...any) (*Restaurant, error) {
 	var r Restaurant
 	dest := []any{
 		&r.ID, &r.Slug, &r.Name, &r.Description, &r.Phone, &r.Email, &r.AddressLine, &r.City,
-		&r.PostalCode, &r.Currency, &r.IsPublished, &r.Version, &r.CreatedAt, &r.UpdatedAt,
+		&r.PostalCode, &r.Currency, &r.Timezone, &r.IsPublished, &r.AcceptingOrders, &r.Version, &r.CreatedAt, &r.UpdatedAt,
 	}
 	err := row.Scan(append(dest, extra...)...)
 	return &r, err
@@ -98,11 +113,13 @@ func (m RestaurantModel) InsertWithOwner(ctx context.Context, r *Restaurant, own
 	defer tx.Rollback()
 
 	query := `
-		INSERT INTO restaurants (slug, name, description, phone, email, address_line, city, postal_code, currency, is_published)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO restaurants (slug, name, description, phone, email, address_line, city, postal_code,
+		                         currency, timezone, is_published, accepting_orders)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id, version, created_at, updated_at`
 
-	args := []any{r.Slug, r.Name, r.Description, r.Phone, r.Email, r.AddressLine, r.City, r.PostalCode, r.Currency, r.IsPublished}
+	args := []any{r.Slug, r.Name, r.Description, r.Phone, r.Email, r.AddressLine, r.City, r.PostalCode,
+		r.Currency, r.Timezone, r.IsPublished, r.AcceptingOrders}
 
 	err = tx.QueryRowContext(ctx, query, args...).Scan(&r.ID, &r.Version, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
@@ -171,13 +188,13 @@ func (m RestaurantModel) Update(ctx context.Context, r *Restaurant) error {
 	query := `
 		UPDATE restaurants
 		SET slug = ?, name = ?, description = ?, phone = ?, email = ?, address_line = ?,
-		    city = ?, postal_code = ?, currency = ?, is_published = ?,
+		    city = ?, postal_code = ?, currency = ?, timezone = ?, is_published = ?, accepting_orders = ?,
 		    version = version + 1, updated_at = ?
 		WHERE id = ? AND version = ?`
 
 	args := []any{
 		r.Slug, r.Name, r.Description, r.Phone, r.Email, r.AddressLine,
-		r.City, r.PostalCode, r.Currency, r.IsPublished, updatedAt,
+		r.City, r.PostalCode, r.Currency, r.Timezone, r.IsPublished, r.AcceptingOrders, updatedAt,
 		r.ID, r.Version,
 	}
 
@@ -288,4 +305,19 @@ func (m RestaurantModel) ListForUser(ctx context.Context, userID int64) ([]Resta
 	}
 
 	return restaurants, nil
+}
+
+// SetAcceptingOrders pauses or resumes ordering, regardless of version: it's
+// a single switch, so there's nothing to merge.
+func (m RestaurantModel) SetAcceptingOrders(ctx context.Context, id int64, accepting bool) error {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	result, err := m.DB.ExecContext(ctx,
+		"UPDATE restaurants SET accepting_orders = ?, version = version + 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+		accepting, now(), id)
+	if err != nil {
+		return fmt.Errorf("setting accepting_orders: %w", err)
+	}
+	return expectOneRow(result, ErrRecordNotFound)
 }

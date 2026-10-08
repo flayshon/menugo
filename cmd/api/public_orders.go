@@ -206,6 +206,10 @@ func (app *application) createOrderHandler(w http.ResponseWriter, r *http.Reques
 		case errors.Is(err, data.ErrNotDeliverable):
 			v.AddError("address.postal_code", notDeliverableMessage)
 			app.failedValidationResponse(w, r, v.Errors)
+		case errors.Is(err, data.ErrRestaurantClosed):
+			app.conflictResponse(w, r, "the restaurant is not accepting orders right now")
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
 		case errors.As(err, &belowMin):
 			v.AddError("items", fmt.Sprintf("the subtotal must be at least %d for delivery to this address", belowMin.MinOrderCents))
 			app.failedValidationResponse(w, r, v.Errors)

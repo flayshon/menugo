@@ -89,7 +89,14 @@ func (app *application) showPublicMenuHandler(w http.ResponseWriter, r *http.Req
 		})
 	}
 
+	hours, err := app.models.OpeningHours.Get(r.Context(), restaurant.ID)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
 	env := envelope{
+		"opening_hours": newOpeningHoursResponse(restaurant, hours),
 		"restaurant": publicRestaurant{
 			Slug:        restaurant.Slug,
 			Name:        restaurant.Name,

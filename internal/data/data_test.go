@@ -88,7 +88,7 @@ func TestValidatePasswordPlaintext(t *testing.T) {
 }
 
 func TestValidateRestaurant(t *testing.T) {
-	valid := Restaurant{Name: "Pizza Place", Slug: "pizza-place", Currency: "BRL"}
+	valid := Restaurant{Name: "Pizza Place", Slug: "pizza-place", Currency: "BRL", Timezone: "America/Recife"}
 
 	tests := []struct {
 		name   string
@@ -104,6 +104,9 @@ func TestValidateRestaurant(t *testing.T) {
 		{"empty email is fine", func(r *Restaurant) { r.Email = "" }, ""},
 		{"missing currency", func(r *Restaurant) { r.Currency = "" }, "currency"},
 		{"unknown currency", func(r *Restaurant) { r.Currency = "XYZ" }, "currency"},
+		{"missing time zone", func(r *Restaurant) { r.Timezone = "" }, "timezone"},
+		{"unknown time zone", func(r *Restaurant) { r.Timezone = "Recife" }, "timezone"},
+		{"server-local time zone", func(r *Restaurant) { r.Timezone = "Local" }, "timezone"},
 	}
 
 	for _, tt := range tests {

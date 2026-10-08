@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	_ "time/tzdata" // restaurants' time zones work even without a system tz database
 
 	"menugo.flayshon.com/internal/data"
 	"menugo.flayshon.com/internal/database"

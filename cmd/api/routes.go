@@ -83,5 +83,10 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("GET /v1/me/deliveries/{deliveryID}", app.requireAuthenticatedUser(app.showMyDeliveryHandler))
 	mux.HandleFunc("PATCH /v1/me/deliveries/{deliveryID}", app.requireAuthenticatedUser(app.updateMyDeliveryHandler))
 
+	// Opening hours and pausing orders.
+	mux.HandleFunc("GET /v1/restaurants/{restaurantID}/opening-hours", app.requireRestaurantRole(data.StaffRoles, app.showOpeningHoursHandler))
+	mux.HandleFunc("PUT /v1/restaurants/{restaurantID}/opening-hours", app.requireRestaurantRole(data.ManagerRoles, app.updateOpeningHoursHandler))
+	mux.HandleFunc("PUT /v1/restaurants/{restaurantID}/accepting-orders", app.requireRestaurantRole(data.StaffRoles, app.setAcceptingOrdersHandler))
+
 	return app.logRequest(app.matchRoute(mux, app.recoverPanic(app.rateLimit(app.secureHeaders(app.authenticate(app.jsonUnmatched(mux)))))))
 }

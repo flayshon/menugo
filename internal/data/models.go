@@ -22,30 +22,32 @@ const queryTimeout = 3 * time.Second
 
 // Models groups all the models so they can be passed around as one value.
 type Models struct {
-	Users       UserModel
-	Tokens      TokenModel
-	Restaurants RestaurantModel
-	Memberships MembershipModel
-	Categories  CategoryModel
-	MenuItems   MenuItemModel
-	Zones       DeliveryZoneModel
-	Orders      OrderModel
-	Drivers     DriverModel
-	Deliveries  DeliveryModel
+	Users        UserModel
+	Tokens       TokenModel
+	Restaurants  RestaurantModel
+	Memberships  MembershipModel
+	Categories   CategoryModel
+	MenuItems    MenuItemModel
+	Zones        DeliveryZoneModel
+	Orders       OrderModel
+	Drivers      DriverModel
+	Deliveries   DeliveryModel
+	OpeningHours OpeningHoursModel
 }
 
 func NewModels(db *sql.DB) Models {
 	return Models{
-		Users:       UserModel{DB: db},
-		Tokens:      TokenModel{DB: db},
-		Restaurants: RestaurantModel{DB: db},
-		Memberships: MembershipModel{DB: db},
-		Categories:  CategoryModel{DB: db},
-		MenuItems:   MenuItemModel{DB: db},
-		Zones:       DeliveryZoneModel{DB: db},
-		Orders:      OrderModel{DB: db},
-		Drivers:     DriverModel{DB: db},
-		Deliveries:  DeliveryModel{DB: db},
+		Users:        UserModel{DB: db},
+		Tokens:       TokenModel{DB: db},
+		Restaurants:  RestaurantModel{DB: db},
+		Memberships:  MembershipModel{DB: db},
+		Categories:   CategoryModel{DB: db},
+		MenuItems:    MenuItemModel{DB: db},
+		Zones:        DeliveryZoneModel{DB: db},
+		Orders:       OrderModel{DB: db},
+		Drivers:      DriverModel{DB: db},
+		Deliveries:   DeliveryModel{DB: db},
+		OpeningHours: OpeningHoursModel{DB: db},
 	}
 }
 

@@ -80,7 +80,7 @@ func checkField(t *testing.T, v *validator.Validator, field string) {
 func newRestaurant(t *testing.T, m Models, slug string) *Restaurant {
 	t.Helper()
 	owner := insertUser(t, m, slug+"@example.com")
-	r := &Restaurant{Name: slug, Slug: slug, Currency: "BRL"}
+	r := &Restaurant{Name: slug, Slug: slug, Currency: "BRL", Timezone: "UTC", AcceptingOrders: true}
 	if err := m.Restaurants.InsertWithOwner(context.Background(), r, owner.ID); err != nil {
 		t.Fatal(err)
 	}

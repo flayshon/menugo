@@ -76,6 +76,9 @@ the restaurant isn't published** (the two are indistinguishable).
 - Only customer-facing fields are returned (the restaurant's email, internal
   IDs, versions and timestamps are not). Item `id`s will be used to place
   orders.
+- `opening_hours` is the schedule and `is_open` (as in
+  [Opening hours](#opening-hours)): show it, and disable checkout while
+  `is_open` is `false`.
 - Response headers: `Cache-Control: public, max-age=60` (changes can take up
   to a minute to show) and `Access-Control-Allow-Origin: *`, so any website
   can embed the menu.
@@ -185,6 +188,7 @@ Errors (`422` unless stated):
 | No active zone covers the postal code | `address.postal_code` |
 | Subtotal below the zone's minimum | `items` |
 | Restaurant not published | `404` |
+| Restaurant closed or paused | `409` |
 | `expected_total_cents` differs | `409`, body includes `total_cents` |
 
 ### `GET /v1/tracking/{token}`
@@ -491,7 +495,9 @@ A restaurant:
   "city": "São Paulo",
   "postal_code": "",
   "currency": "BRL",
+  "timezone": "America/Recife",
   "is_published": false,
+  "accepting_orders": true,
   "version": 1,
   "created_at": "2026-10-08T18:24:43.53Z",
   "updated_at": "2026-10-08T18:24:43.53Z"
@@ -508,6 +514,8 @@ A restaurant:
 | `email` | valid if present |
 | `address_line` / `city` / `postal_code` | ≤ 255 / 100 / 20 characters |
 | `is_published` | default `false`. While `false`, the public menu returns 404. |
+| `timezone` | IANA name, e.g. `America/Recife`; default `UTC`. Opening hours are in this zone, so set it. |
+| `accepting_orders` | default `true`. See [Opening hours](#opening-hours). |
 
 ### `POST /v1/restaurants`: create
 
@@ -546,6 +554,52 @@ for everyone: members get `404` on all its endpoints and it leaves their
 past orders, and its slug becomes free for a new restaurant. `409` while it
 has orders in progress: finish or cancel them first. There is no undelete
 endpoint yet.
+
+## Opening hours
+
+A restaurant takes orders only when it is **open**: `accepting_orders` is
+`true` *and* the current time, in its `timezone`, falls inside its weekly
+schedule. An empty schedule means always open. Orders placed while closed get
+`409`.
+
+### `GET /v1/restaurants/{restaurantID}/opening-hours`
+
+Staff and up.
+
+```json
+{
+  "opening_hours": {
+    "timezone": "America/Recife",
+    "accepting_orders": true,
+    "opening_hours": [
+      {"day": "friday", "opens_at": "11:30", "closes_at": "15:00"},
+      {"day": "friday", "opens_at": "18:00", "closes_at": "02:00"}
+    ],
+    "is_open": false
+  }
+}
+```
+
+### `PUT /v1/restaurants/{restaurantID}/opening-hours`
+
+Owners and admins. Replaces the whole schedule:
+`{"opening_hours": [{"day": "friday", "opens_at": "18:00", "closes_at": "02:00"}]}`.
+
+- `day`: `sunday` … `saturday`. A day can have several intervals.
+- `opens_at` / `closes_at`: `HH:MM`, 24-hour. Open from `opens_at`
+  (inclusive) to `closes_at` (exclusive); `closes_at` may be `24:00`.
+- If `closes_at` isn't after `opens_at`, the interval runs past midnight:
+  Friday `18:00`–`02:00` is Friday evening until 2am Saturday.
+- At most 50 intervals. `[]` means always open.
+
+Times follow the local wall clock, so daylight saving changes need no
+adjustment. Responds like `GET`.
+
+### `PUT /v1/restaurants/{restaurantID}/accepting-orders`
+
+Staff and up: `{"accepting_orders": false}` pauses ordering (e.g. when the
+kitchen is overwhelmed); `true` resumes it. Responds like `GET`. Owners and
+admins can also set it with `PATCH /v1/restaurants/{restaurantID}`.
 
 ## Members
 

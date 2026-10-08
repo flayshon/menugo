@@ -11,38 +11,42 @@ import (
 )
 
 type restaurantResponse struct {
-	ID          int64     `json:"id"`
-	Slug        string    `json:"slug"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Phone       string    `json:"phone"`
-	Email       string    `json:"email"`
-	AddressLine string    `json:"address_line"`
-	City        string    `json:"city"`
-	PostalCode  string    `json:"postal_code"`
-	Currency    string    `json:"currency"`
-	IsPublished bool      `json:"is_published"`
-	Version     int32     `json:"version"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID              int64     `json:"id"`
+	Slug            string    `json:"slug"`
+	Name            string    `json:"name"`
+	Description     string    `json:"description"`
+	Phone           string    `json:"phone"`
+	Email           string    `json:"email"`
+	AddressLine     string    `json:"address_line"`
+	City            string    `json:"city"`
+	PostalCode      string    `json:"postal_code"`
+	Currency        string    `json:"currency"`
+	Timezone        string    `json:"timezone"`
+	IsPublished     bool      `json:"is_published"`
+	AcceptingOrders bool      `json:"accepting_orders"`
+	Version         int32     `json:"version"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 func newRestaurantResponse(r *data.Restaurant) restaurantResponse {
 	return restaurantResponse{
-		ID:          r.ID,
-		Slug:        r.Slug,
-		Name:        r.Name,
-		Description: r.Description,
-		Phone:       r.Phone,
-		Email:       r.Email,
-		AddressLine: r.AddressLine,
-		City:        r.City,
-		PostalCode:  r.PostalCode,
-		Currency:    r.Currency,
-		IsPublished: r.IsPublished,
-		Version:     r.Version,
-		CreatedAt:   r.CreatedAt,
-		UpdatedAt:   r.UpdatedAt,
+		ID:              r.ID,
+		Slug:            r.Slug,
+		Name:            r.Name,
+		Description:     r.Description,
+		Phone:           r.Phone,
+		Email:           r.Email,
+		AddressLine:     r.AddressLine,
+		City:            r.City,
+		PostalCode:      r.PostalCode,
+		Currency:        r.Currency,
+		Timezone:        r.Timezone,
+		IsPublished:     r.IsPublished,
+		AcceptingOrders: r.AcceptingOrders,
+		Version:         r.Version,
+		CreatedAt:       r.CreatedAt,
+		UpdatedAt:       r.UpdatedAt,
 	}
 }
 
@@ -58,6 +62,7 @@ func (app *application) createRestaurantHandler(w http.ResponseWriter, r *http.R
 		City        string `json:"city"`
 		PostalCode  string `json:"postal_code"`
 		Currency    string `json:"currency"`
+		Timezone    string `json:"timezone"`
 		IsPublished bool   `json:"is_published"`
 	}
 
@@ -67,16 +72,21 @@ func (app *application) createRestaurantHandler(w http.ResponseWriter, r *http.R
 	}
 
 	restaurant := &data.Restaurant{
-		Slug:        input.Slug,
-		Name:        input.Name,
-		Description: input.Description,
-		Phone:       input.Phone,
-		Email:       input.Email,
-		AddressLine: input.AddressLine,
-		City:        input.City,
-		PostalCode:  input.PostalCode,
-		Currency:    input.Currency,
-		IsPublished: input.IsPublished,
+		Slug:            input.Slug,
+		Name:            input.Name,
+		Description:     input.Description,
+		Phone:           input.Phone,
+		Email:           input.Email,
+		AddressLine:     input.AddressLine,
+		City:            input.City,
+		PostalCode:      input.PostalCode,
+		Currency:        input.Currency,
+		Timezone:        input.Timezone,
+		IsPublished:     input.IsPublished,
+		AcceptingOrders: true,
+	}
+	if restaurant.Timezone == "" {
+		restaurant.Timezone = "UTC"
 	}
 
 	v := validator.New()
@@ -173,17 +183,19 @@ func (app *application) updateRestaurantHandler(w http.ResponseWriter, r *http.R
 	}
 
 	var input struct {
-		Version     *int32  `json:"version"`
-		Slug        *string `json:"slug"`
-		Name        *string `json:"name"`
-		Description *string `json:"description"`
-		Phone       *string `json:"phone"`
-		Email       *string `json:"email"`
-		AddressLine *string `json:"address_line"`
-		City        *string `json:"city"`
-		PostalCode  *string `json:"postal_code"`
-		Currency    *string `json:"currency"`
-		IsPublished *bool   `json:"is_published"`
+		Version         *int32  `json:"version"`
+		Slug            *string `json:"slug"`
+		Name            *string `json:"name"`
+		Description     *string `json:"description"`
+		Phone           *string `json:"phone"`
+		Email           *string `json:"email"`
+		AddressLine     *string `json:"address_line"`
+		City            *string `json:"city"`
+		PostalCode      *string `json:"postal_code"`
+		Currency        *string `json:"currency"`
+		Timezone        *string `json:"timezone"`
+		IsPublished     *bool   `json:"is_published"`
+		AcceptingOrders *bool   `json:"accepting_orders"`
 	}
 
 	if err := app.readJSON(w, r, &input); err != nil {
@@ -205,7 +217,9 @@ func (app *application) updateRestaurantHandler(w http.ResponseWriter, r *http.R
 	setIfPresent(&restaurant.City, input.City)
 	setIfPresent(&restaurant.PostalCode, input.PostalCode)
 	setIfPresent(&restaurant.Currency, input.Currency)
+	setIfPresent(&restaurant.Timezone, input.Timezone)
 	setIfPresent(&restaurant.IsPublished, input.IsPublished)
+	setIfPresent(&restaurant.AcceptingOrders, input.AcceptingOrders)
 
 	v := validator.New()
 	if data.ValidateRestaurant(v, restaurant); !v.Valid() {

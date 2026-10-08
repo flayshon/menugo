@@ -238,15 +238,25 @@ func (m OrderModel) Create(ctx context.Context, restaurant *Restaurant, req *Ord
 	// Re-check the restaurant inside the transaction, with a shared lock:
 	// deleting a restaurant takes an exclusive lock on this row, so an order
 	// can't be placed while it's being deleted.
-	var open bool
+	var live, accepting bool
+	var timezone string
 	err = tx.QueryRowContext(ctx,
-		"SELECT is_published AND deleted_at IS NULL FROM restaurants WHERE id = ? LOCK IN SHARE MODE",
-		restaurant.ID).Scan(&open)
-	if err != nil || !open {
+		"SELECT is_published AND deleted_at IS NULL, accepting_orders, timezone FROM restaurants WHERE id = ? LOCK IN SHARE MODE",
+		restaurant.ID).Scan(&live, &accepting, &timezone)
+	if err != nil || !live {
 		if err == nil || errors.Is(err, sql.ErrNoRows) {
 			return nil, "", ErrRecordNotFound
 		}
 		return nil, "", fmt.Errorf("checking restaurant: %w", err)
+	}
+
+	hours, err := openingHours(ctx, tx, restaurant.ID)
+	if err != nil {
+		return nil, "", err
+	}
+	current := Restaurant{Timezone: timezone}
+	if !accepting || !IsOpen(hours, current.Location(), time.Now()) {
+		return nil, "", ErrRestaurantClosed
 	}
 
 	menu, err := orderableItems(ctx, tx, restaurant.ID, req.Lines)

@@ -164,6 +164,10 @@ docs/               API reference
   through ignores deleted restaurants, so access is revoked in one place.
   Other deletions (menu items, zones, drivers) keep orders intact through
   copied names and prices.
+- **Opening hours.** A weekly schedule per restaurant in its own IANA time
+  zone (`time/tzdata` is embedded, so this works without a system time zone
+  database), plus a pause switch staff can flip. Placing an order checks
+  both inside the order's transaction.
 - **Concurrency.** Editable records carry a `version`. Updates only apply if
   the version hasn't changed since the record was read (409 otherwise), and
   clients can send `version` to make sure they're editing what they saw.
@@ -187,7 +191,6 @@ docs/               API reference
 
 ### Not done yet
 
-- Opening hours: a published restaurant currently accepts orders at any time.
 - Saved customer addresses: each order carries its own address for now.
 - CORS for the authenticated API, for when a management front end is on
   another origin. (The public menu already allows any origin.)
