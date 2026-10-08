@@ -19,6 +19,7 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("GET /v1/tracking/{token}", app.allowAnyOrigin(app.showTrackedOrderHandler))
 	mux.HandleFunc("POST /v1/tracking/{token}/cancel", app.allowAnyOrigin(app.limitByIP(app.limiters.publicWrite, app.cancelTrackedOrderHandler)))
 	mux.HandleFunc("OPTIONS /v1/tracking/{token}/cancel", app.publicPreflightHandler)
+	mux.HandleFunc("GET /v1/tracking/{token}/events", app.allowAnyOrigin(app.trackingEventsHandler))
 
 	mux.HandleFunc("POST /v1/users", app.limitByIP(app.limiters.auth, app.registerUserHandler))
 	mux.HandleFunc("GET /v1/users/me", app.requireAuthenticatedUser(app.showCurrentUserHandler))
@@ -87,6 +88,10 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("GET /v1/restaurants/{restaurantID}/opening-hours", app.requireRestaurantRole(data.StaffRoles, app.showOpeningHoursHandler))
 	mux.HandleFunc("PUT /v1/restaurants/{restaurantID}/opening-hours", app.requireRestaurantRole(data.ManagerRoles, app.updateOpeningHoursHandler))
 	mux.HandleFunc("PUT /v1/restaurants/{restaurantID}/accepting-orders", app.requireRestaurantRole(data.StaffRoles, app.setAcceptingOrdersHandler))
+
+	// Real-time events (server-sent events).
+	mux.HandleFunc("GET /v1/restaurants/{restaurantID}/events", app.requireRestaurantRole(data.StaffRoles, app.restaurantEventsHandler))
+	mux.HandleFunc("GET /v1/me/events", app.requireAuthenticatedUser(app.myEventsHandler))
 
 	return app.logRequest(app.matchRoute(mux, app.recoverPanic(app.rateLimit(app.secureHeaders(app.authenticate(app.jsonUnmatched(mux)))))))
 }

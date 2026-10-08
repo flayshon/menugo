@@ -37,9 +37,14 @@ type Migration struct {
 
 var filenameRX = regexp.MustCompile(`^(\d+)_([a-z0-9_]+)\.sql$`)
 
-// lockName is the MariaDB named lock that stops two processes from running
-// migrations at the same time.
+// lockName is the MariaDB named lock that stops two processes from migrating
+// the same database at the same time. Named locks are server-wide, so the
+// database name is appended (see lockKey): migrating different databases
+// on one server must not wait on each other.
 const lockName = "menugo_schema_migrations"
+
+// lockKey is the SQL expression for this database's lock name.
+const lockKey = "CONCAT(?, '.', DATABASE())"
 
 // Load reads all migrations from the root of fsys and returns them sorted by
 // version. Files that don't end in .sql are ignored.
@@ -109,14 +114,14 @@ func Up(ctx context.Context, db *sql.DB, fsys fs.FS) ([]Migration, error) {
 	defer conn.Close()
 
 	var locked sql.NullInt64
-	err = conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 30)", lockName).Scan(&locked)
+	err = conn.QueryRowContext(ctx, "SELECT GET_LOCK("+lockKey+", 30)", lockName).Scan(&locked)
 	if err != nil {
 		return nil, fmt.Errorf("acquiring migration lock: %w", err)
 	}
 	if locked.Int64 != 1 {
 		return nil, errors.New("timed out waiting for the migration lock; is another migration running?")
 	}
-	defer conn.ExecContext(context.WithoutCancel(ctx), "SELECT RELEASE_LOCK(?)", lockName)
+	defer conn.ExecContext(context.WithoutCancel(ctx), "SELECT RELEASE_LOCK("+lockKey+")", lockName)
 
 	_, err = conn.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (

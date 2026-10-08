@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"menugo.flayshon.com/internal/data"
+	"menugo.flayshon.com/internal/events"
 	"menugo.flayshon.com/internal/testdb"
 )
 
@@ -26,8 +27,11 @@ func newTestApplication(t *testing.T) *application {
 	cfg.shutdownTimeout = 5 * time.Second
 
 	return &application{
-		config: cfg,
-		logger: slog.New(slog.NewTextHandler(t.Output(), nil)),
+		config:        cfg,
+		logger:        slog.New(slog.NewTextHandler(t.Output(), nil)),
+		broker:        events.NewBroker(),
+		streams:       defaultStreamSettings,
+		streamsClosed: make(chan struct{}),
 	}
 }
 

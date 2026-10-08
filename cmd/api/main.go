@@ -16,6 +16,7 @@ import (
 
 	"menugo.flayshon.com/internal/data"
 	"menugo.flayshon.com/internal/database"
+	"menugo.flayshon.com/internal/events"
 )
 
 const version = "0.1.0"
@@ -27,6 +28,13 @@ type application struct {
 	models   data.Models
 	limiters limiters
 	wg       sync.WaitGroup // tracks background goroutines for graceful shutdown
+
+	// Real-time events: the broker fans events out to open streams, which
+	// all end when streamsClosed is closed.
+	broker           *events.Broker
+	streams          streamSettings
+	streamsClosed    chan struct{}
+	closeStreamsOnce sync.Once
 }
 
 func main() {
@@ -82,11 +90,14 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	logger.Info("database connection pool established")
 
 	app := &application{
-		config:   cfg,
-		logger:   logger,
-		db:       db,
-		models:   data.NewModels(db),
-		limiters: newLimiters(cfg),
+		config:        cfg,
+		logger:        logger,
+		db:            db,
+		models:        data.NewModels(db),
+		limiters:      newLimiters(cfg),
+		broker:        events.NewBroker(),
+		streams:       defaultStreamSettings,
+		streamsClosed: make(chan struct{}),
 	}
 
 	return app.serve(ctx)

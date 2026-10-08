@@ -337,6 +337,11 @@ func (m OrderModel) Create(ctx context.Context, restaurant *Restaurant, req *Ord
 	if err := insertStatusChange(ctx, tx, order, placed); err != nil {
 		return nil, "", err
 	}
+
+	event := Event{RestaurantID: order.RestaurantID, OrderID: order.ID, Type: EventOrderPlaced, OrderStatus: StatusPending}
+	if err := recordEvent(ctx, tx, event); err != nil {
+		return nil, "", err
+	}
 	order.History = []StatusChange{placed}
 
 	if err := tx.Commit(); err != nil {
@@ -621,7 +626,18 @@ func transitionTx(ctx context.Context, tx *sql.Tx, restaurantID, id int64, to Or
 		return "", err
 	}
 
+	// Before syncDelivery, which may end the delivery.
+	driverUserID, err := activeDriverUserID(ctx, tx, restaurantID, id)
+	if err != nil {
+		return "", err
+	}
+
 	if err := syncDelivery(ctx, tx, restaurantID, id, to, changedAt); err != nil {
+		return "", err
+	}
+
+	event := Event{RestaurantID: restaurantID, OrderID: id, Type: EventOrderStatusChanged, OrderStatus: to, DriverUserID: driverUserID}
+	if err := recordEvent(ctx, tx, event); err != nil {
 		return "", err
 	}
 

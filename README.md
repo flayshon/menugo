@@ -7,11 +7,12 @@ drivers.
 Written in Go with the standard library (`net/http`, `database/sql`,
 `log/slog`) and MariaDB, in the style of Alex Edwards' *Let's Go Further*.
 
-**Status:** Phases 1–8. Users, authentication, restaurants, membership/roles,
-menu management, the public menu, delivery zones, customer ordering (delivery
-and pickup, with tracking and cancellation), order management, drivers,
-driver assignment and the delivery lifecycle are implemented. Notifications
-and real-time updates are next.
+**Status:** all planned phases are implemented: users, authentication,
+restaurants, membership/roles, menu management, the public menu, delivery
+zones, customer ordering (delivery and pickup, with tracking and
+cancellation), order management, drivers, driver assignment, the delivery
+lifecycle and real-time updates (server-sent events), plus rate limiting,
+soft deletion and opening hours.
 
 API reference: [docs/api.md](docs/api.md).
 
@@ -100,10 +101,13 @@ make audit    # tidy check, gofmt, go vet, tests
 ```
 
 Unit tests need nothing. Integration tests (data access and HTTP endpoints)
-run only when `TEST_DB_DSN` is set, and are skipped otherwise. Each one
-creates its own `menugo_test_<random>` database, migrates it and drops it at
-the end, so they run in parallel and leave nothing behind. The setup script
-creates a `menugo_test` user that may only touch databases with that prefix.
+run only when `TEST_DB_DSN` is set, and are skipped otherwise. Each running
+test gets a migrated, empty `menugo_test_<random>` database of its own, so
+they run in parallel. Databases are reused between tests (emptied in
+between) and dropped when the package's tests finish (`testdb.Main` in each
+package's `TestMain`). Tests must therefore not assume particular IDs. The
+setup script creates a `menugo_test` user that may only touch databases with
+that prefix.
 
 ## Project layout
 
@@ -151,6 +155,16 @@ docs/               API reference
   serialize without deadlocks. A generated column with a unique key lets the
   database itself guarantee at most one active delivery per order. Drivers
   only see customer contact details while a delivery is in progress.
+- **Real-time updates.** Changes to orders and deliveries write a row to
+  `events` in the same transaction, so there's an event exactly when a change
+  commits. Each API instance polls that table every second and fans events
+  out (`internal/events`) to the server-sent event streams connected to it,
+  so this works with several instances. The poller re-reads a 10-second
+  window, because auto-increment IDs can commit out of order, and skips IDs
+  it has already published. Streams lift the server's read and write
+  timeouts for themselves, send heartbeats, re-check access every minute,
+  and are closed when shutdown starts so it doesn't wait on them. Events are
+  deleted after 24 hours.
 - **Customer tracking.** Customers get a random tracking token; only its hash
   is stored. Tracking responses leave out the customer's contact details and
   address. Request logs show `/v1/tracking/{token}` instead of the real path.

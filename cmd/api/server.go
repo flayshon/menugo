@@ -28,6 +28,12 @@ func (app *application) serve(ctx context.Context) error {
 
 	app.background(ctx, func(ctx context.Context) { app.cleanupExpiredTokens(ctx, tokenCleanupInterval) })
 	app.background(ctx, func(ctx context.Context) { app.cleanupLimiters(ctx, time.Minute) })
+	app.background(ctx, app.pollEvents)
+	app.background(ctx, func(ctx context.Context) { app.cleanupOldEvents(ctx, time.Hour) })
+
+	// Shutdown waits for in-flight requests; event streams never finish on
+	// their own, so end them as shutdown starts.
+	srv.RegisterOnShutdown(app.closeStreams)
 
 	serverErr := make(chan error, 1)
 	go func() {

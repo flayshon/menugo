@@ -157,15 +157,17 @@ func (m DeliveryModel) Assign(ctx context.Context, restaurantID, orderID, driver
 	}
 	defer tx.Rollback()
 
-	if err := lockAssignableOrder(ctx, tx, restaurantID, orderID); err != nil {
+	order, err := lockAssignableOrder(ctx, tx, restaurantID, orderID)
+	if err != nil {
 		return nil, err
 	}
 
 	// The shared lock keeps the driver from being deleted until we commit.
 	var active bool
+	var driverUserID int64
 	err = tx.QueryRowContext(ctx,
-		"SELECT is_active FROM drivers WHERE restaurant_id = ? AND id = ? LOCK IN SHARE MODE",
-		restaurantID, driverID).Scan(&active)
+		"SELECT is_active, user_id FROM drivers WHERE restaurant_id = ? AND id = ? LOCK IN SHARE MODE",
+		restaurantID, driverID).Scan(&active, &driverUserID)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !active) {
 		return nil, ErrDriverUnavailable
 	}
@@ -182,10 +184,8 @@ func (m DeliveryModel) Assign(ctx context.Context, restaurantID, orderID, driver
 		// Already assigned to this driver.
 	case err == nil || errors.Is(err, sql.ErrNoRows):
 		at := now()
-		if _, err := tx.ExecContext(ctx,
-			"UPDATE deliveries SET status = 'unassigned', ended_at = ? WHERE restaurant_id = ? AND order_id = ? AND status = 'assigned'",
-			at, restaurantID, orderID); err != nil {
-			return nil, fmt.Errorf("unassigning previous driver: %w", err)
+		if _, err := recordUnassignment(ctx, tx, order, at); err != nil {
+			return nil, err
 		}
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO deliveries (restaurant_id, order_id, driver_id, status, assigned_by_user_id, assigned_at)
@@ -193,6 +193,10 @@ func (m DeliveryModel) Assign(ctx context.Context, restaurantID, orderID, driver
 			restaurantID, orderID, driverID, sql.NullInt64{Int64: byUserID, Valid: byUserID != 0}, at)
 		if err != nil {
 			return nil, fmt.Errorf("inserting delivery: %w", err)
+		}
+		event := Event{RestaurantID: restaurantID, OrderID: orderID, Type: EventDeliveryAssigned, OrderStatus: order.Status, DriverUserID: driverUserID}
+		if err := recordEvent(ctx, tx, event); err != nil {
+			return nil, err
 		}
 	default:
 		return nil, fmt.Errorf("getting current delivery: %w", err)
@@ -217,18 +221,17 @@ func (m DeliveryModel) Unassign(ctx context.Context, restaurantID, orderID int64
 	}
 	defer tx.Rollback()
 
-	if err := lockAssignableOrder(ctx, tx, restaurantID, orderID); err != nil {
+	order, err := lockAssignableOrder(ctx, tx, restaurantID, orderID)
+	if err != nil {
 		return err
 	}
 
-	result, err := tx.ExecContext(ctx,
-		"UPDATE deliveries SET status = 'unassigned', ended_at = ? WHERE restaurant_id = ? AND order_id = ? AND status = 'assigned'",
-		now(), restaurantID, orderID)
+	unassigned, err := recordUnassignment(ctx, tx, order, now())
 	if err != nil {
-		return fmt.Errorf("unassigning driver: %w", err)
-	}
-	if err := expectOneRow(result, ErrNoActiveDelivery); err != nil {
 		return err
+	}
+	if !unassigned {
+		return ErrNoActiveDelivery
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -238,15 +241,39 @@ func (m DeliveryModel) Unassign(ctx context.Context, restaurantID, orderID int64
 }
 
 // lockAssignableOrder locks the order and checks its driver can be changed.
-func lockAssignableOrder(ctx context.Context, tx *sql.Tx, restaurantID, orderID int64) error {
+func lockAssignableOrder(ctx context.Context, tx *sql.Tx, restaurantID, orderID int64) (*Order, error) {
 	order, err := lockOrder(ctx, tx, restaurantID, orderID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if order.Fulfillment != FulfillmentDelivery || !slices.Contains(assignableStatuses, order.Status) {
-		return &NotAssignableError{Fulfillment: order.Fulfillment, Status: order.Status}
+		return nil, &NotAssignableError{Fulfillment: order.Fulfillment, Status: order.Status}
 	}
-	return nil
+	return order, nil
+}
+
+// recordUnassignment ends the order's current assignment, if any, and
+// records an event for the driver who lost it. It reports whether there was
+// one.
+func recordUnassignment(ctx context.Context, tx *sql.Tx, order *Order, at time.Time) (bool, error) {
+	previous, err := activeDriverUserID(ctx, tx, order.RestaurantID, order.ID)
+	if err != nil {
+		return false, err
+	}
+
+	result, err := tx.ExecContext(ctx,
+		"UPDATE deliveries SET status = 'unassigned', ended_at = ? WHERE restaurant_id = ? AND order_id = ? AND status = 'assigned'",
+		at, order.RestaurantID, order.ID)
+	if err != nil {
+		return false, fmt.Errorf("unassigning driver: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil || n == 0 {
+		return false, err
+	}
+
+	event := Event{RestaurantID: order.RestaurantID, OrderID: order.ID, Type: EventDeliveryUnassigned, OrderStatus: order.Status, DriverUserID: previous}
+	return true, recordEvent(ctx, tx, event)
 }
 
 // Current returns the order's latest delivery that wasn't unassigned: the

@@ -406,6 +406,60 @@ progress (`assigned` or `picked_up`); they are `null` before and after.
 Staff can also mark orders `out_for_delivery` and `delivered` themselves
 (e.g. if a driver's phone dies); the history shows who did it.
 
+## Real-time events
+
+Three [server-sent event](https://html.spec.whatwg.org/multipage/server-sent-events.html)
+streams push changes as they happen, typically within a second. They're
+plain HTTP `GET`s that stay open; each message looks like:
+
+```
+id: 1042
+event: order.status_changed
+data: {"order_id": 17, "order_status": "confirmed", "driver_user_id": null, "at": "2026-10-08T20:51:17.92Z"}
+```
+
+Event types: `order.placed`, `order.status_changed`, `delivery.assigned`,
+`delivery.unassigned` (and `order` on the tracking stream).
+
+For every stream:
+
+- A comment line (`: ping`) every 25 seconds keeps proxies from closing it.
+- Streams end after 30 minutes, when the server restarts, or if the client
+  falls far behind. Reconnect when that happens (browsers' `EventSource`
+  does so by itself, after the 3 seconds the stream asks for).
+- Authenticated streams re-check access every minute and end with
+  `event: end` (`{"reason": "access revoked"}`) after logout, token expiry or
+  removal from the restaurant. Don't reconnect after that.
+- Authenticated streams take the usual `Authorization: Bearer` header. The
+  browser's built-in `EventSource` can't send headers, so web clients use a
+  fetch-based SSE client (e.g. `@microsoft/fetch-event-source`); mobile
+  clients can set the header directly.
+
+### `GET /v1/restaurants/{restaurantID}/events`
+
+Staff and up. Everything that happens to the restaurant's orders, as small
+messages (`order_id`, `order_status`, `driver_user_id`, `at`); fetch
+details through the REST API. Each message has an `id`: on reconnect, send
+the last one as `Last-Event-ID` (EventSource-style clients do this
+automatically) and the stream first replays what you missed, up to 1000
+events from the last 24 hours. Without it, reload your order list on
+connect.
+
+### `GET /v1/tracking/{token}/events`
+
+No authentication; any origin, so `new EventSource(url)` works. Sends the
+public order view (as `GET /v1/tracking/{token}`) as an `order` event right
+away, then again whenever it changes. The stream ends once the order is
+delivered, picked up or cancelled.
+
+### `GET /v1/me/events`
+
+Any authenticated user (meant for drivers): `delivery.assigned` and
+`delivery.unassigned` for deliveries given to or taken from them, and
+`order.status_changed` for orders they're delivering. Messages carry
+`order_id`, `restaurant_id`, `order_status` and `at`; fetch details from
+`/v1/me/deliveries`.
+
 ## Delivery zones
 
 Under `/v1/restaurants/{restaurantID}/delivery-zones`. A zone:
