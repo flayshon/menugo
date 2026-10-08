@@ -61,5 +61,11 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("PATCH /v1/restaurants/{restaurantID}/delivery-zones/{zoneID}", app.requireRestaurantRole(data.ManagerRoles, app.updateZoneHandler))
 	mux.HandleFunc("DELETE /v1/restaurants/{restaurantID}/delivery-zones/{zoneID}", app.requireRestaurantRole(data.ManagerRoles, app.deleteZoneHandler))
 
+	// Orders, as the restaurant manages them. Drivers get their own
+	// endpoints for deliveries.
+	mux.HandleFunc("GET /v1/restaurants/{restaurantID}/orders", app.requireRestaurantRole(data.StaffRoles, app.listOrdersHandler))
+	mux.HandleFunc("GET /v1/restaurants/{restaurantID}/orders/{orderID}", app.requireRestaurantRole(data.StaffRoles, app.showOrderHandler))
+	mux.HandleFunc("PATCH /v1/restaurants/{restaurantID}/orders/{orderID}", app.requireRestaurantRole(data.StaffRoles, app.updateOrderHandler))
+
 	return app.logRequest(app.matchRoute(mux, app.recoverPanic(app.secureHeaders(app.authenticate(app.jsonUnmatched(mux))))))
 }

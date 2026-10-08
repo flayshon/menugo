@@ -41,12 +41,12 @@ Validation failures (`422 Unprocessable Entity`) map field names to messages:
 
 **Roles.** Each user has a role in each restaurant they belong to:
 
-| Role | View restaurant | Update restaurant | Delete restaurant | Manage members | View menu & zones | Edit menu & zones | Mark items sold out |
-|------|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `restaurant_owner` | ✓ | ✓ | ✓ | admins, staff, drivers | ✓ | ✓ | ✓ |
-| `restaurant_admin` | ✓ | ✓ |   | staff, drivers | ✓ | ✓ | ✓ |
-| `restaurant_staff` | ✓ |   |   |   | ✓ |   | ✓ |
-| `driver`           | ✓ |   |   |   |   |   |   |
+| Role | View restaurant | Update restaurant | Delete restaurant | Manage members | View menu & zones | Edit menu & zones | Mark items sold out | Manage orders |
+|------|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `restaurant_owner` | ✓ | ✓ | ✓ | admins, staff, drivers | ✓ | ✓ | ✓ | ✓ |
+| `restaurant_admin` | ✓ | ✓ |   | staff, drivers | ✓ | ✓ | ✓ | ✓ |
+| `restaurant_staff` | ✓ |   |   |   | ✓ |   | ✓ | ✓ |
+| `driver`           | ✓ |   |   |   |   |   |   |   |
 
 ---
 
@@ -191,6 +191,9 @@ Errors (`422` unless stated):
 The order, as above (without `tracking_token`). `404` for unknown tokens.
 Orders stay trackable even if the restaurant is later unpublished.
 
+Cancelled orders' last `status_history` entry may include a `reason` given
+by the restaurant.
+
 ### `POST /v1/tracking/{token}/cancel`
 
 Cancels the order if the restaurant hasn't confirmed it yet (`can_cancel` is
@@ -208,6 +211,78 @@ Any other move is rejected. The restaurant can cancel until a delivery order
 is `out_for_delivery` (pickup orders: until `picked_up`). Customers can only
 cancel while the order is `pending`. Every change is recorded with who made it
 and when.
+
+## Orders (restaurant)
+
+Under `/v1/restaurants/{restaurantID}/orders`, for owners, admins and staff.
+
+An order, as the restaurant sees it:
+
+```json
+{
+  "id": 17,
+  "status": "confirmed",
+  "fulfillment": "delivery",
+  "customer": {"id": 4, "name": "Ana Souza", "phone": "+5581999990000", "email": ""},
+  "address": {"line": "Rua da Aurora, 100", "details": "apto 12", "city": "Recife", "postal_code": "50030230"},
+  "delivery_zone_id": 1,
+  "items": [
+    {"id": 31, "menu_item_id": 1, "name": "Pizza", "quantity": 1, "unit_price_cents": 4500, "line_total_cents": 4500, "notes": "no olives"}
+  ],
+  "subtotal_cents": 4500, "delivery_fee_cents": 800, "total_cents": 5300, "currency": "BRL",
+  "notes": "ring the bell",
+  "status_history": [
+    {"from": null, "to": "pending", "actor_type": "customer", "actor_user_id": null, "reason": "", "at": "..."},
+    {"from": "pending", "to": "confirmed", "actor_type": "user", "actor_user_id": 2, "reason": "", "at": "..."}
+  ],
+  "next_statuses": ["preparing", "cancelled"],
+  "version": 2, "created_at": "...", "updated_at": "..."
+}
+```
+
+- `address` and `delivery_zone_id` are `null` for pickup orders
+  (`delivery_zone_id` also once the zone is deleted).
+- `menu_item_id` is `null` once the item is deleted from the menu; the order
+  keeps its name and price.
+- `next_statuses` lists the moves allowed from the current status (see
+  [Order lifecycle](#order-lifecycle)): use it to decide which buttons to show.
+
+### `GET /v1/restaurants/{restaurantID}/orders`
+
+Orders with their items (without `status_history`), plus pagination metadata.
+
+| Query parameter | Meaning |
+|-----------------|---------|
+| `status` | comma-separated statuses, e.g. `pending,confirmed,preparing` |
+| `fulfillment` | `delivery` or `pickup` |
+| `from`, `to` | placed at or after `from` and before `to` (RFC 3339, e.g. `2026-10-08T00:00:00-03:00`) |
+| `sort` | `-created_at` (newest first, default) or `created_at` (oldest first, e.g. for a kitchen queue) |
+| `page`, `page_size` | default 1 and 20; `page_size` at most 100 |
+
+```json
+{
+  "orders": [...],
+  "metadata": {"current_page": 1, "page_size": 20, "first_page": 1, "last_page": 3, "total_records": 47}
+}
+```
+
+### `GET /v1/restaurants/{restaurantID}/orders/{orderID}`
+
+`200` `{"order": {...}}` with `status_history`.
+
+### `PATCH /v1/restaurants/{restaurantID}/orders/{orderID}`
+
+Changes the status; nothing else about an order can be changed.
+
+```json
+{"status": "preparing"}
+{"status": "cancelled", "reason": "Out of dough tonight"}
+```
+
+`reason` (≤ 255 characters) is only accepted when cancelling, and is shown to
+the customer. `200` with the updated order; `409` if the move isn't allowed
+from the current status (including when someone else changed it first);
+`422` for an unknown status.
 
 ## Delivery zones
 

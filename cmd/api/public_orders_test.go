@@ -266,7 +266,7 @@ func TestTrackingAndCustomerCancel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = s.app.models.Orders.Transition(context.Background(), stored.RestaurantID, stored.ID, data.StatusConfirmed, data.Actor{Type: data.ActorUser})
+		err = s.app.models.Orders.Transition(context.Background(), stored.RestaurantID, stored.ID, data.StatusConfirmed, data.Actor{Type: data.ActorUser}, "")
 		if err != nil {
 			t.Fatal(err)
 		}

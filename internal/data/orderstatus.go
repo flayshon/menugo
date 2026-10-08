@@ -3,6 +3,8 @@ package data
 import (
 	"fmt"
 	"slices"
+
+	"menugo.flayshon.com/internal/validator"
 )
 
 // Fulfillment is how an order reaches the customer.
@@ -30,6 +32,16 @@ const (
 	StatusPickedUp         OrderStatus = "picked_up"
 	StatusCancelled        OrderStatus = "cancelled"
 )
+
+// AllOrderStatuses lists every status, in lifecycle order.
+var AllOrderStatuses = []OrderStatus{
+	StatusPending, StatusConfirmed, StatusPreparing, StatusReadyForDelivery, StatusReadyForPickup,
+	StatusOutForDelivery, StatusDelivered, StatusPickedUp, StatusCancelled,
+}
+
+func (s OrderStatus) Valid() bool {
+	return slices.Contains(AllOrderStatuses, s)
+}
 
 // orderTransitions lists, for each kind of order, the statuses the
 // restaurant may move an order to from each status. Anything not listed is
@@ -94,4 +106,15 @@ type InvalidTransitionError struct {
 
 func (e *InvalidTransitionError) Error() string {
 	return fmt.Sprintf("an order cannot go from %s to %s", e.From, e.To)
+}
+
+// ValidateStatusChange checks a requested status change before the state
+// machine is consulted. A reason may only be given when cancelling.
+func ValidateStatusChange(v *validator.Validator, to OrderStatus, reason string) {
+	v.Check(to != "", "status", "must be provided")
+	v.Check(to.Valid(), "status", "is not a valid order status")
+	v.Check(validator.MaxChars(reason, 255), "reason", "must not be more than 255 characters long")
+	if reason != "" {
+		v.Check(to == StatusCancelled, "reason", "can only be given when cancelling")
+	}
 }

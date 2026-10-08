@@ -7,8 +7,12 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"time"
+
+	"menugo.flayshon.com/internal/validator"
 )
 
 // maxRequestBodyBytes caps the size of JSON request bodies.
@@ -112,4 +116,51 @@ func bearerToken(r *http.Request) (token string, ok bool, err error) {
 		return "", true, errors.New("malformed Authorization header")
 	}
 	return token, true, nil
+}
+
+// readString returns the query string value for key, or defaultValue.
+func (app *application) readString(qs url.Values, key, defaultValue string) string {
+	if s := qs.Get(key); s != "" {
+		return s
+	}
+	return defaultValue
+}
+
+// readCSV splits a comma-separated query string value, e.g.
+// ?status=pending,confirmed. It returns nil if the key is absent.
+func (app *application) readCSV(qs url.Values, key string) []string {
+	if s := qs.Get(key); s != "" {
+		return strings.Split(s, ",")
+	}
+	return nil
+}
+
+// readInt parses an integer query string value, recording a validation
+// error if it isn't one.
+func (app *application) readInt(qs url.Values, key string, defaultValue int, v *validator.Validator) int {
+	s := qs.Get(key)
+	if s == "" {
+		return defaultValue
+	}
+	i, err := strconv.Atoi(s)
+	if err != nil {
+		v.AddError(key, "must be an integer value")
+		return defaultValue
+	}
+	return i
+}
+
+// readTime parses an RFC 3339 query string value, recording a validation
+// error if it isn't one. It returns the zero time if the key is absent.
+func (app *application) readTime(qs url.Values, key string, v *validator.Validator) time.Time {
+	s := qs.Get(key)
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		v.AddError(key, "must be an RFC 3339 time, e.g. 2026-10-08T00:00:00Z")
+		return time.Time{}
+	}
+	return t
 }

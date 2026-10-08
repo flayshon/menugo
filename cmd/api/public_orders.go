@@ -44,6 +44,7 @@ type publicOrderItem struct {
 
 type publicOrderEvent struct {
 	Status data.OrderStatus `json:"status"`
+	Reason string           `json:"reason,omitempty"`
 	At     time.Time        `json:"at"`
 }
 
@@ -55,7 +56,7 @@ func newPublicOrderResponse(o *data.Order, r *data.Restaurant) publicOrderRespon
 
 	history := make([]publicOrderEvent, 0, len(o.History))
 	for _, h := range o.History {
-		history = append(history, publicOrderEvent{h.To, h.At})
+		history = append(history, publicOrderEvent{h.To, h.Reason, h.At})
 	}
 
 	return publicOrderResponse{
@@ -270,7 +271,7 @@ func (app *application) cancelTrackedOrderHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	err := app.models.Orders.Transition(r.Context(), order.RestaurantID, order.ID, data.StatusCancelled, data.Actor{Type: data.ActorCustomer})
+	err := app.models.Orders.Transition(r.Context(), order.RestaurantID, order.ID, data.StatusCancelled, data.Actor{Type: data.ActorCustomer}, "")
 	if err != nil {
 		var invalid *data.InvalidTransitionError
 		switch {

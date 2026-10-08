@@ -528,23 +528,23 @@ func TestOrderTransition(t *testing.T) {
 
 	staff := Actor{Type: ActorUser, UserID: owner.ID}
 
-	if err := f.m.Orders.Transition(ctx, f.restaurant.ID, order.ID, StatusConfirmed, staff); err != nil {
+	if err := f.m.Orders.Transition(ctx, f.restaurant.ID, order.ID, StatusConfirmed, staff, ""); err != nil {
 		t.Fatal(err)
 	}
 
 	var invalid *InvalidTransitionError
-	err = f.m.Orders.Transition(ctx, f.restaurant.ID, order.ID, StatusCancelled, Actor{Type: ActorCustomer})
+	err = f.m.Orders.Transition(ctx, f.restaurant.ID, order.ID, StatusCancelled, Actor{Type: ActorCustomer}, "")
 	if !errors.As(err, &invalid) || invalid.From != StatusConfirmed {
 		t.Errorf("customer cancel after confirmation: err = %v", err)
 	}
 
-	err = f.m.Orders.Transition(ctx, f.restaurant.ID, order.ID, StatusDelivered, staff)
+	err = f.m.Orders.Transition(ctx, f.restaurant.ID, order.ID, StatusDelivered, staff, "")
 	if !errors.As(err, &invalid) {
 		t.Errorf("skipping steps: err = %v", err)
 	}
 
 	other := newRestaurant(t, f.m, "other")
-	if err := f.m.Orders.Transition(ctx, other.ID, order.ID, StatusPreparing, staff); !errors.Is(err, ErrRecordNotFound) {
+	if err := f.m.Orders.Transition(ctx, other.ID, order.ID, StatusPreparing, staff, ""); !errors.Is(err, ErrRecordNotFound) {
 		t.Errorf("other restaurant: err = %v; want ErrRecordNotFound", err)
 	}
 

@@ -7,10 +7,10 @@ drivers.
 Written in Go with the standard library (`net/http`, `database/sql`,
 `log/slog`) and MariaDB, in the style of Alex Edwards' *Let's Go Further*.
 
-**Status:** Phase 4. Users, authentication, restaurants, membership/roles,
-menu management, the public menu, delivery zones and customer ordering
-(delivery and pickup, with tracking and cancellation) are implemented. Order
-management for restaurant staff, drivers and deliveries come in later phases.
+**Status:** Phase 5. Users, authentication, restaurants, membership/roles,
+menu management, the public menu, delivery zones, customer ordering (delivery
+and pickup, with tracking and cancellation) and order management for
+restaurant staff are implemented. Drivers and deliveries come next.
 
 API reference: [docs/api.md](docs/api.md).
 
@@ -170,6 +170,6 @@ docs/               API reference
   another origin. (The public menu already allows any origin.)
 - Email verification and password reset (needs a mailer).
 - Invitations for people who don't have an account yet.
-- Pagination: menu lists return everything, which is fine at restaurant-menu
-  sizes.
+- Pagination for menus and zones: those lists return everything, which is
+  fine at their sizes. Order lists are paginated.
 - Image uploads: items store an image URL; hosting is up to the client.

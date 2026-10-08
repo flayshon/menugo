@@ -96,6 +96,7 @@ type StatusChange struct {
 	To          OrderStatus
 	ActorType   ActorType
 	ActorUserID int64
+	Reason      string // why the order was cancelled; empty otherwise
 	At          time.Time
 }
 
@@ -393,13 +394,13 @@ func insertOrderItems(ctx context.Context, tx *sql.Tx, order *Order) error {
 
 func insertStatusChange(ctx context.Context, tx *sql.Tx, order *Order, c StatusChange) error {
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO order_status_history (restaurant_id, order_id, from_status, to_status, actor_type, actor_user_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO order_status_history (restaurant_id, order_id, from_status, to_status, actor_type, actor_user_id, reason, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		order.RestaurantID, order.ID,
 		sql.NullString{String: string(c.From), Valid: c.From != ""},
 		c.To, c.ActorType,
 		sql.NullInt64{Int64: c.ActorUserID, Valid: c.ActorUserID != 0},
-		c.At)
+		c.Reason, c.At)
 	if err != nil {
 		return fmt.Errorf("recording order status change: %w", err)
 	}
@@ -472,14 +473,10 @@ func (m OrderModel) items(ctx context.Context, order *Order) ([]OrderItem, error
 
 	items := []OrderItem{}
 	for rows.Next() {
-		var item OrderItem
-		var menuItemID sql.NullInt64
-		err := rows.Scan(&item.ID, &menuItemID, &item.Name, &item.UnitPriceCents,
-			&item.Quantity, &item.LineTotalCents, &item.Notes)
+		item, err := scanOrderItem(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scanning order item: %w", err)
 		}
-		item.MenuItemID = menuItemID.Int64
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -488,9 +485,20 @@ func (m OrderModel) items(ctx context.Context, order *Order) ([]OrderItem, error
 	return items, nil
 }
 
+// scanOrderItem scans id, menu_item_id, name, unit_price_cents, quantity,
+// line_total_cents, notes.
+func scanOrderItem(row interface{ Scan(...any) error }) (OrderItem, error) {
+	var item OrderItem
+	var menuItemID sql.NullInt64
+	err := row.Scan(&item.ID, &menuItemID, &item.Name, &item.UnitPriceCents,
+		&item.Quantity, &item.LineTotalCents, &item.Notes)
+	item.MenuItemID = menuItemID.Int64
+	return item, err
+}
+
 func (m OrderModel) history(ctx context.Context, order *Order) ([]StatusChange, error) {
 	rows, err := m.DB.QueryContext(ctx, `
-		SELECT from_status, to_status, actor_type, actor_user_id, created_at
+		SELECT from_status, to_status, actor_type, actor_user_id, reason, created_at
 		FROM order_status_history
 		WHERE restaurant_id = ? AND order_id = ?
 		ORDER BY id`, order.RestaurantID, order.ID)
@@ -504,7 +512,7 @@ func (m OrderModel) history(ctx context.Context, order *Order) ([]StatusChange, 
 		var c StatusChange
 		var from sql.NullString
 		var userID sql.NullInt64
-		if err := rows.Scan(&from, &c.To, &c.ActorType, &userID, &c.At); err != nil {
+		if err := rows.Scan(&from, &c.To, &c.ActorType, &userID, &c.Reason, &c.At); err != nil {
 			return nil, fmt.Errorf("scanning order history: %w", err)
 		}
 		c.From = OrderStatus(from.String)
@@ -518,10 +526,11 @@ func (m OrderModel) history(ctx context.Context, order *Order) ([]StatusChange, 
 }
 
 // Transition moves order id of restaurantID to status to, if the rules allow
-// actor to (see CanTransition), and records the change in its history. The
-// order row is locked while the change is checked and made, so two
-// concurrent changes can't both succeed from the same status.
-func (m OrderModel) Transition(ctx context.Context, restaurantID, id int64, to OrderStatus, actor Actor) error {
+// actor to (see CanTransition), and records the change and reason (see
+// ValidateStatusChange) in its history. The order row is locked while the
+// change is checked and made, so two concurrent changes can't both succeed
+// from the same status.
+func (m OrderModel) Transition(ctx context.Context, restaurantID, id int64, to OrderStatus, actor Actor, reason string) error {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
@@ -555,7 +564,7 @@ func (m OrderModel) Transition(ctx context.Context, restaurantID, id int64, to O
 		return fmt.Errorf("updating order status: %w", err)
 	}
 
-	change := StatusChange{From: order.Status, To: to, ActorType: actor.Type, ActorUserID: actor.UserID, At: changedAt}
+	change := StatusChange{From: order.Status, To: to, ActorType: actor.Type, ActorUserID: actor.UserID, Reason: reason, At: changedAt}
 	if err := insertStatusChange(ctx, tx, order, change); err != nil {
 		return err
 	}
