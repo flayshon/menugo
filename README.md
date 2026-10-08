@@ -1,8 +1,8 @@
 # MenuGo API
 
 Backend for a multi-tenant SaaS that gives restaurants online ordering and
-delivery logistics: menus, a public online menu, orders, delivery zones and
-drivers.
+delivery logistics: menu management, orders, delivery zones,
+drivers, notifications, etc.
 
 Written in Go with the standard library (`net/http`, `database/sql`,
 `log/slog`) and MariaDB, in the style of Alex Edwards' *Let's Go Further*.
