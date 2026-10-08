@@ -157,12 +157,8 @@ func (m RestaurantModel) Update(ctx context.Context, r *Restaurant) error {
 		return fmt.Errorf("updating restaurant: %w", err)
 	}
 
-	n, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("updating restaurant: %w", err)
-	}
-	if n == 0 {
-		return ErrEditConflict
+	if err := expectOneRow(result, ErrEditConflict); err != nil {
+		return err
 	}
 
 	r.Version++
@@ -180,14 +176,7 @@ func (m RestaurantModel) Delete(ctx context.Context, id int64) error {
 		return fmt.Errorf("deleting restaurant: %w", err)
 	}
 
-	n, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("deleting restaurant: %w", err)
-	}
-	if n == 0 {
-		return ErrRecordNotFound
-	}
-	return nil
+	return expectOneRow(result, ErrRecordNotFound)
 }
 
 // ListForUser returns the restaurants userID is a member of, with their role

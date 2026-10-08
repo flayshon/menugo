@@ -5,6 +5,7 @@ package data
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -25,6 +26,8 @@ type Models struct {
 	Tokens      TokenModel
 	Restaurants RestaurantModel
 	Memberships MembershipModel
+	Categories  CategoryModel
+	MenuItems   MenuItemModel
 }
 
 func NewModels(db *sql.DB) Models {
@@ -33,11 +36,16 @@ func NewModels(db *sql.DB) Models {
 		Tokens:      TokenModel{DB: db},
 		Restaurants: RestaurantModel{DB: db},
 		Memberships: MembershipModel{DB: db},
+		Categories:  CategoryModel{DB: db},
+		MenuItems:   MenuItemModel{DB: db},
 	}
 }
 
-// errDupEntry is MariaDB's error number for a unique key violation.
-const errDupEntry = 1062
+// MariaDB error numbers we react to.
+const (
+	errDupEntry        = 1062 // unique key violation
+	errNoReferencedRow = 1452 // foreign key points at a missing row
+)
 
 // isDuplicateKey reports whether err is a unique-constraint violation on the
 // named key ("PRIMARY" for the primary key).
@@ -50,8 +58,31 @@ func isDuplicateKey(err error, key string) bool {
 	return strings.HasSuffix(mysqlErr.Message, "'"+key+"'")
 }
 
+// isForeignKeyViolation reports whether err is an insert or update that
+// broke the named foreign key constraint.
+func isForeignKeyViolation(err error, constraint string) bool {
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(err, &mysqlErr) || mysqlErr.Number != errNoReferencedRow {
+		return false
+	}
+	return strings.Contains(mysqlErr.Message, "CONSTRAINT `"+constraint+"`")
+}
+
 // now returns the current UTC time at the precision MariaDB stores (DATETIME(6)),
 // so values written and read back compare equal.
 func now() time.Time {
 	return time.Now().UTC().Truncate(time.Microsecond)
+}
+
+// expectOneRow returns errNone if result affected no rows. Use it for
+// statements that target exactly one row.
+func expectOneRow(result sql.Result, errNone error) error {
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("getting rows affected: %w", err)
+	}
+	if n == 0 {
+		return errNone
+	}
+	return nil
 }

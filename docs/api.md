@@ -41,12 +41,12 @@ Validation failures (`422 Unprocessable Entity`) map field names to messages:
 
 **Roles.** Each user has a role in each restaurant they belong to:
 
-| Role | View restaurant | Update restaurant | Delete restaurant | Manage members |
-|------|:-:|:-:|:-:|:-:|
-| `restaurant_owner` | ✓ | ✓ | ✓ | admins, staff, drivers |
-| `restaurant_admin` | ✓ | ✓ |   | staff, drivers |
-| `restaurant_staff` | ✓ |   |   |   |
-| `driver`           | ✓ |   |   |   |
+| Role | View restaurant | Update restaurant | Delete restaurant | Manage members | View menu | Edit menu | Mark items sold out |
+|------|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `restaurant_owner` | ✓ | ✓ | ✓ | admins, staff, drivers | ✓ | ✓ | ✓ |
+| `restaurant_admin` | ✓ | ✓ |   | staff, drivers | ✓ | ✓ | ✓ |
+| `restaurant_staff` | ✓ |   |   |   | ✓ |   | ✓ |
+| `driver`           | ✓ |   |   |   |   |   |   |
 
 ---
 
@@ -190,3 +190,78 @@ roles below your own (`403` otherwise).
 
 Owners and admins, for members whose role is below their own. Owners can't be
 removed. `204 No Content`.
+
+## Menu
+
+All menu endpoints are under `/v1/restaurants/{restaurantID}/menu`. Prices are
+integers in the minor unit of the restaurant's currency (`price_cents: 4500`
+is R$ 45,00 for a BRL restaurant); decimals are rejected with `400`.
+
+IDs from another restaurant behave as if they don't exist: `404` in the URL,
+`422` when used as a `category_id`.
+
+### `GET /v1/restaurants/{restaurantID}/menu`: the whole menu
+
+Staff and up. Categories in `sort_order`, each with its items in `sort_order`
+(ties broken by creation order). Hidden categories and sold-out items are
+included; this is the management view, not the public menu.
+
+```json
+{
+  "menu": {
+    "categories": [
+      {
+        "id": 2, "name": "Pizzas", "description": "", "sort_order": 10, "is_visible": true,
+        "version": 1, "created_at": "...", "updated_at": "...",
+        "items": [
+          {"id": 5, "category_id": 2, "name": "Margherita", "description": "Tomato, mozzarella, basil",
+           "price_cents": 4500, "image_url": "https://cdn.example.com/m.jpg", "is_available": true,
+           "sort_order": 1, "version": 1, "created_at": "...", "updated_at": "..."}
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Categories
+
+A category:
+
+| Field | Rules |
+|-------|-------|
+| `name` | required, ≤ 100 characters, unique within the restaurant (case-insensitive) |
+| `description` | ≤ 500 characters |
+| `sort_order` | 0–1,000,000, default 0. Lower comes first. |
+| `is_visible` | default `true`. Hidden categories will be left out of the public menu. |
+
+| Method and path | Who | Result |
+|-----------------|-----|--------|
+| `GET /menu/categories` | staff and up | `200` `{"categories": [...]}` in menu order |
+| `POST /menu/categories` | owners, admins | `201` `{"category": {...}}` with `Location` |
+| `GET /menu/categories/{categoryID}` | staff and up | `200` `{"category": {...}}` |
+| `PATCH /menu/categories/{categoryID}` | owners, admins | `200`; partial update, optional `version` as for restaurants |
+| `DELETE /menu/categories/{categoryID}` | owners, admins | `204`; `409` if the category still has items |
+
+### Items
+
+An item:
+
+| Field | Rules |
+|-------|-------|
+| `category_id` | required; a category of this restaurant |
+| `name` | required, ≤ 200 characters |
+| `description` | ≤ 2000 characters |
+| `price_cents` | required, integer, 0–10,000,000 |
+| `image_url` | optional absolute `http`/`https` URL, ≤ 2048 characters. The API stores the link; it doesn't host images. |
+| `is_available` | default `true`. `false` means sold out. |
+| `sort_order` | 0–1,000,000, default 0 |
+
+| Method and path | Who | Result |
+|-----------------|-----|--------|
+| `GET /menu/items[?category_id=N]` | staff and up | `200` `{"items": [...]}` |
+| `POST /menu/items` | owners, admins | `201` `{"item": {...}}` with `Location` |
+| `GET /menu/items/{itemID}` | staff and up | `200` `{"item": {...}}` |
+| `PATCH /menu/items/{itemID}` | owners, admins | `200`; partial update (including moving to another category), optional `version` |
+| `PUT /menu/items/{itemID}/availability` | staff and up | `200` `{"item": {...}}`; body `{"is_available": false}` |
+| `DELETE /menu/items/{itemID}` | owners, admins | `204` |

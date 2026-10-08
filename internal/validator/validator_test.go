@@ -91,3 +91,21 @@ func TestPermittedValue(t *testing.T) {
 		t.Error("expected c not to be permitted")
 	}
 }
+
+func TestIsHTTPURL(t *testing.T) {
+	tests := map[string]bool{
+		"https://cdn.example.com/a.jpg": true,
+		"http://localhost:8080/a.png":   true,
+		"/images/a.jpg":                 false,
+		"cdn.example.com/a.jpg":         false,
+		"javascript:alert(1)":           false,
+		"ftp://example.com/a.jpg":       false,
+		"https://":                      false,
+		"data:image/png;base64,AAAA":    false,
+	}
+	for value, want := range tests {
+		if got := IsHTTPURL(value); got != want {
+			t.Errorf("IsHTTPURL(%q) = %t; want %t", value, got, want)
+		}
+	}
+}

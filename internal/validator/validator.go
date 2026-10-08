@@ -3,6 +3,7 @@
 package validator
 
 import (
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -69,4 +70,13 @@ func Matches(value string, rx *regexp.Regexp) bool {
 // PermittedValue reports whether value is one of permittedValues.
 func PermittedValue[T comparable](value T, permittedValues ...T) bool {
 	return slices.Contains(permittedValues, value)
+}
+
+// IsHTTPURL reports whether value is an absolute http or https URL.
+func IsHTTPURL(value string) bool {
+	u, err := url.Parse(value)
+	if err != nil {
+		return false
+	}
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }

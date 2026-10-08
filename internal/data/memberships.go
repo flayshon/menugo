@@ -23,6 +23,7 @@ const (
 // Role groups used by route authorization.
 var (
 	AnyRole      = []Role{RoleOwner, RoleAdmin, RoleStaff, RoleDriver}
+	StaffRoles   = []Role{RoleOwner, RoleAdmin, RoleStaff}
 	ManagerRoles = []Role{RoleOwner, RoleAdmin}
 	OwnerRoles   = []Role{RoleOwner}
 )
@@ -122,14 +123,7 @@ func (m MembershipModel) Delete(ctx context.Context, restaurantID, userID int64,
 		return fmt.Errorf("deleting membership: %w", err)
 	}
 
-	n, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("deleting membership: %w", err)
-	}
-	if n == 0 {
-		return ErrEditConflict
-	}
-	return nil
+	return expectOneRow(result, ErrEditConflict)
 }
 
 // ListMembers returns everyone with access to restaurantID, oldest first.

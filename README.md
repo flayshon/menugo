@@ -7,9 +7,9 @@ drivers.
 Written in Go with the standard library (`net/http`, `database/sql`,
 `log/slog`) and MariaDB, in the style of Alex Edwards' *Let's Go Further*.
 
-**Status:** Phase 1 (foundation). Users, authentication, restaurants and
-restaurant membership/roles are implemented. Menus, orders, delivery zones,
-drivers and deliveries come in later phases.
+**Status:** Phase 2. Users, authentication, restaurants, membership/roles and
+menu management (categories and items) are implemented. The public menu,
+orders, delivery zones, drivers and deliveries come in later phases.
 
 API reference: [docs/api.md](docs/api.md).
 
@@ -139,8 +139,13 @@ docs/               API reference
 - **Concurrency.** Editable records carry a `version`. Updates only apply if
   the version hasn't changed since the record was read (409 otherwise), and
   clients can send `version` to make sure they're editing what they saw.
-- **Money and time.** Amounts will be stored as integer minor units
-  (`*_cents BIGINT`). Times are `DATETIME(6)` in UTC.
+- **Tenant integrity in the schema.** Besides scoping every query by
+  restaurant, child tables reference their parents through composite keys
+  where it matters: `menu_items (restaurant_id, category_id)` references
+  `menu_categories (restaurant_id, id)`, so the database itself rejects an
+  item in another restaurant's category.
+- **Money and time.** Amounts are integer minor units (`price_cents BIGINT`);
+  JSON decimals are rejected. Times are `DATETIME(6)` in UTC.
 - **Dependencies.** `github.com/go-sql-driver/mysql` and `golang.org/x/crypto`
   (bcrypt). Everything else is the standard library, including routing
   (`http.ServeMux` patterns) and migrations.
@@ -151,3 +156,6 @@ docs/               API reference
 - CORS, for when a browser front end is on another origin.
 - Email verification and password reset (needs a mailer).
 - Invitations for people who don't have an account yet.
+- Pagination: menu lists return everything, which is fine at restaurant-menu
+  sizes.
+- Image uploads: items store an image URL; hosting is up to the client.
