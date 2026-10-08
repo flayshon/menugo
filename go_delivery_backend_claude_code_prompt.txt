@@ -1,0 +1,678 @@
+You are building the backend of a SaaS platform that provides online ordering and delivery logistics infrastructure for restaurants, similar in concept to MenuDino and other restaurant online-menu/delivery platforms.
+
+The backend must be written in Go and use MariaDB as its primary relational database.
+
+PRIMARY GOAL
+
+Build a production-oriented REST API backend that allows restaurants to:
+
+- Create and manage their restaurant account.
+- Manage their restaurant profile.
+- Manage menus, categories, products, prices, descriptions, images, and availability.
+- Publish an online menu that customers can access without authentication.
+- Receive and manage customer orders.
+- Track order status throughout the ordering and delivery lifecycle.
+- Manage delivery addresses.
+- Manage delivery zones and delivery fees.
+- Manage delivery drivers.
+- Assign orders to drivers.
+- Allow drivers to update delivery status.
+- Provide customers with order status information.
+- Provide restaurant operators with an authenticated management API.
+
+The system should be designed as a multi-tenant SaaS application, where restaurants are isolated from each other and users can only access resources belonging to restaurants they are authorized to access.
+
+Do not over-engineer the first version. Build a solid foundation that can evolve into a larger system.
+
+GO VERSION AND CODING STYLE
+
+Use the latest stable version of Go available in the development environment.
+
+The primary coding references and style guidelines are:
+
+- Alex Edwards' Let's Go
+- Alex Edwards' Let's Go Further
+
+Use these books as the primary reference for:
+
+- Project structure
+- HTTP handlers
+- Routing
+- Middleware
+- Request validation
+- JSON encoding/decoding
+- Error handling
+- Database access
+- Authentication
+- Configuration
+- Logging
+- Testing
+- Graceful shutdown
+- Dependency injection
+- Application lifecycle
+- REST API design
+
+Prefer the Go standard library whenever it provides a good solution.
+
+In particular, prefer packages and approaches commonly used throughout the books, such as:
+
+- net/http
+- database/sql
+- encoding/json
+- context
+- log/slog
+- errors
+- crypto/*
+- testing
+- httptest
+- os
+- time
+- strconv
+- strings
+- net/url
+- regexp
+- io
+- sync
+- slices
+- maps
+
+Use newer standard-library functionality when appropriate, even if it was introduced after the books were published.
+
+DEPENDENCIES
+
+Keep external dependencies to a minimum.
+
+Before adding a third-party package, ask whether the standard library provides an adequate solution.
+
+Third-party dependencies are acceptable when they provide significant value, particularly for:
+
+- MariaDB/MySQL database connectivity
+- Database migrations
+- UUID generation if necessary
+- Password hashing
+- JWT or another authentication mechanism, if justified
+- Testing utilities when they provide substantial value
+
+Do not introduce:
+
+- Large web frameworks
+- ORM frameworks
+- Dependency injection frameworks
+- Heavy application frameworks
+- Repository abstraction frameworks
+- Unnecessary utility libraries
+
+Prefer explicit Go code over abstractions that hide how the application works.
+
+Use database/sql directly rather than an ORM.
+
+ARCHITECTURE
+
+Use a modular but pragmatic architecture inspired by the structure in Let's Go Further.
+
+Avoid excessive layering.
+
+A reasonable starting structure is:
+
+cmd/
+    api/
+        main.go
+
+internal/
+    data/
+    jsonlog/
+    mailer/
+    validator/
+    ...
+
+Adapt the structure when the domain requires it.
+
+Domain-specific data models and database access should be organized clearly without creating unnecessary abstractions.
+
+Use dependency injection through explicit structs and constructors.
+
+For example:
+
+type application struct {
+    config   config
+    logger   *slog.Logger
+    models   models
+}
+
+Handlers should be methods on the application type when appropriate.
+
+Keep business logic out of main.go.
+
+main.go should primarily be responsible for:
+
+- Loading configuration
+- Initializing logging
+- Opening the database
+- Initializing application dependencies
+- Creating the HTTP server
+- Starting the server
+- Handling graceful shutdown
+
+HTTP API
+
+Build a RESTful JSON API.
+
+Use net/http and the most appropriate standard-library router available in the target Go version.
+
+Use conventional HTTP methods and status codes.
+
+Examples:
+
+GET     /v1/restaurants/{id}
+POST    /v1/restaurants
+PATCH   /v1/restaurants/{id}
+DELETE  /v1/restaurants/{id}
+
+GET     /v1/restaurants/{id}/menu
+POST    /v1/restaurants/{id}/menu/categories
+POST    /v1/restaurants/{id}/menu/products
+
+POST    /v1/restaurants/{id}/orders
+GET     /v1/restaurants/{id}/orders
+GET     /v1/restaurants/{id}/orders/{orderID}
+
+POST    /v1/orders/{orderID}/cancel
+
+GET     /v1/orders/{orderID}/status
+
+GET     /v1/drivers
+POST    /v1/drivers
+
+POST    /v1/orders/{orderID}/assign-driver
+PATCH   /v1/orders/{orderID}/delivery-status
+
+The exact API structure should be designed according to REST principles rather than blindly following these examples.
+
+Use consistent JSON response formats.
+
+Return useful validation and error responses.
+
+Implement centralized error handling similar to the approach used in Let's Go Further.
+
+AUTHENTICATION AND AUTHORIZATION
+
+Implement authentication for restaurant operators and other privileged users.
+
+Passwords must never be stored in plaintext.
+
+Use a modern password hashing algorithm supported by an appropriate Go package.
+
+Implement authorization separately from authentication.
+
+The system should support roles such as:
+
+restaurant_owner
+restaurant_admin
+restaurant_staff
+driver
+
+Customers ordering from a public menu should not initially need an account.
+
+Use authenticated requests for restaurant management and driver operations.
+
+Every authenticated resource access must verify that the authenticated user is authorized to access the corresponding restaurant/tenant.
+
+Avoid relying solely on IDs supplied by the client.
+
+MULTI-TENANCY
+
+The system is multi-tenant.
+
+The restaurant should be the primary tenant boundary.
+
+Every restaurant-owned resource must have an explicit relationship with its restaurant.
+
+Examples:
+
+restaurant
+user
+restaurant_user
+menu_category
+menu_item
+order
+order_item
+delivery_zone
+driver
+
+When querying or modifying tenant-owned resources, always enforce the restaurant boundary at the database/query or application layer.
+
+Avoid situations where changing an ID in a request could allow one restaurant to access another restaurant's data.
+
+DATABASE
+
+Use MariaDB.
+
+Use database/sql.
+
+Do not use an ORM.
+
+Design a normalized relational schema.
+
+Use foreign keys and appropriate indexes.
+
+Use transactions whenever an operation modifies multiple related records and must be atomic.
+
+Important entities will likely include:
+
+restaurants
+users
+restaurant_users
+menu_categories
+menu_items
+customers
+customer_addresses
+orders
+order_items
+delivery_zones
+drivers
+deliveries
+
+You should refine this schema as implementation progresses.
+
+Use appropriate MariaDB data types.
+
+Money should not be represented using floating-point numbers.
+
+Prefer integer minor units, for example:
+
+price_cents BIGINT
+
+or an equivalent appropriate representation.
+
+Timestamps should be handled consistently using UTC.
+
+Use explicit database migrations.
+
+Migrations must be version-controlled.
+
+ORDERS
+
+Design the order lifecycle explicitly.
+
+For example:
+
+pending
+confirmed
+preparing
+ready_for_delivery
+out_for_delivery
+delivered
+cancelled
+
+The exact state machine should be designed carefully.
+
+Do not allow arbitrary status transitions.
+
+Implement validation for legal state transitions.
+
+For example:
+
+pending -> confirmed
+confirmed -> preparing
+preparing -> ready_for_delivery
+ready_for_delivery -> out_for_delivery
+out_for_delivery -> delivered
+
+Cancellation rules should also be explicit.
+
+Keep order history/auditing in mind from the beginning.
+
+DELIVERY
+
+The delivery system should be designed independently enough that it can evolve later.
+
+A delivery should be associated with:
+
+- An order
+- A restaurant
+- A driver
+- A delivery address
+- A status
+- Relevant timestamps
+
+Initially, implement a simple driver assignment model.
+
+Do not attempt to build a sophisticated real-time route optimization system in the first version.
+
+The architecture should nevertheless leave room for future integrations with:
+
+- External delivery providers
+- Mapping services
+- Route optimization
+- GPS tracking
+- Notifications
+- WebSockets
+- Customer-facing live delivery tracking
+
+VALIDATION
+
+Use explicit request validation.
+
+Follow the style used in Let's Go Further.
+
+Validate:
+
+- Required fields
+- String lengths
+- Numeric ranges
+- Email addresses
+- IDs
+- Prices
+- Quantities
+- Enum-like values
+- Order state transitions
+
+Return structured validation errors that clients can consume.
+
+Avoid silently accepting malformed input.
+
+JSON
+
+Use explicit JSON struct tags.
+
+Prefer dedicated request/response structures rather than exposing database models directly.
+
+For example:
+
+type createMenuItemRequest struct {
+    Name        string `json:"name"`
+    Description string `json:"description"`
+    PriceCents  int64  `json:"price_cents"`
+}
+
+Do not expose internal database implementation details unnecessarily.
+
+Prevent accidental JSON field exposure.
+
+ERROR HANDLING
+
+Follow idiomatic Go error handling.
+
+Use wrapped errors where useful:
+
+fmt.Errorf("getting restaurant: %w", err)
+
+Use sentinel or typed errors only where they provide meaningful behavior.
+
+Do not panic for normal application errors.
+
+Distinguish between:
+
+- Validation errors
+- Authentication errors
+- Authorization errors
+- Not found
+- Conflict
+- Database failures
+- Internal server errors
+
+Do not expose sensitive internal error information to API clients.
+
+Log useful diagnostic information server-side.
+
+LOGGING
+
+Use log/slog.
+
+Logs should be structured.
+
+Include useful contextual information such as:
+
+- Request ID
+- HTTP method
+- Path
+- Status
+- Duration
+- Restaurant ID where appropriate
+- User ID where appropriate
+
+Do not log:
+
+- Passwords
+- Authentication tokens
+- Sensitive customer information
+- Payment information
+
+Implement middleware for request logging.
+
+CONFIGURATION
+
+Configuration should come from environment variables.
+
+Follow the configuration approach demonstrated in Let's Go Further.
+
+Support configuration for at least:
+
+PORT
+ENV
+DB_DSN
+JWT_SECRET / authentication secret if applicable
+
+Use sensible defaults where appropriate.
+
+Validate required configuration at startup.
+
+Fail fast when required configuration is invalid.
+
+TESTING
+
+Testing is a first-class requirement.
+
+Follow the testing philosophy and patterns used in Let's Go and Let's Go Further.
+
+Use the standard library testing tools wherever possible:
+
+testing
+net/http/httptest
+
+Write unit tests for:
+
+- Validation
+- Business rules
+- Order state transitions
+- Authentication
+- Authorization
+- Data access where appropriate
+
+Write integration tests for important HTTP endpoints.
+
+Test error cases, not just successful requests.
+
+Pay particular attention to multi-tenant authorization tests.
+
+For example:
+
+User belonging to Restaurant A must not be able to access Restaurant B's orders even if they know the order ID.
+
+SECURITY
+
+Follow secure-by-default practices.
+
+At minimum:
+
+- Hash passwords securely.
+- Never store plaintext passwords.
+- Validate all input.
+- Prevent SQL injection through parameterized queries.
+- Enforce authorization on every protected resource.
+- Avoid leaking sensitive information in errors.
+- Use secure HTTP headers where appropriate.
+- Configure reasonable request body limits.
+- Handle authentication tokens securely.
+- Use constant-time comparisons where relevant.
+- Do not trust tenant IDs supplied by clients.
+- Use transactions for security-sensitive state changes.
+
+Do not implement payment processing in the initial version unless explicitly requested.
+
+API DOCUMENTATION
+
+Keep API documentation maintainable.
+
+Initially, document endpoints and request/response formats in the repository.
+
+If an API specification is introduced later, prefer OpenAPI.
+
+Do not add a documentation framework merely for the sake of having one.
+
+DEVELOPMENT WORKFLOW
+
+Before writing substantial code:
+
+1. Inspect the existing repository.
+2. Identify the current Go version.
+3. Check whether a project structure already exists.
+4. Check existing dependencies.
+5. Check existing database/migration files.
+6. Preserve good existing code instead of unnecessarily rewriting it.
+
+Then propose a concise implementation plan.
+
+Implement the system incrementally.
+
+After each significant feature:
+
+1. Run gofmt.
+2. Run go vet.
+3. Run the test suite.
+4. Fix compilation errors.
+5. Fix failing tests.
+6. Review the resulting code for unnecessary abstractions.
+
+Prefer small, understandable commits/changes.
+
+CODE QUALITY PRINCIPLES
+
+Follow these principles throughout the project:
+
+- Idiomatic Go
+- Simple code over clever code
+- Explicit dependencies
+- Small interfaces
+- Avoid premature abstraction
+- Composition over inheritance
+- Standard library first
+- database/sql instead of an ORM
+- Clear error handling
+- Context propagation
+- Explicit transactions
+- Strong validation
+- Testable code
+- Secure defaults
+- Backward-compatible API evolution
+
+Do not introduce abstractions merely because they are common in other languages.
+
+In particular, avoid automatically creating:
+
+IUserRepository
+IOrderRepository
+IService
+IController
+
+interfaces unless there is a concrete reason for them.
+
+Follow Go's philosophy of defining interfaces where they are consumed.
+
+IMPORTANT INSTRUCTION ABOUT THE BOOKS
+
+Use Let's Go and Let's Go Further as architectural and stylistic references, not as immutable specifications.
+
+The books may target older Go versions.
+
+When the latest stable Go version provides a better standard-library API or a more idiomatic approach, use the modern approach.
+
+For example, prefer modern Go features and packages when they improve the implementation while preserving the books' overall philosophy.
+
+The goal is:
+
+"Modern Go written with the simplicity, explicitness, and architectural discipline demonstrated in Let's Go and Let's Go Further."
+
+INITIAL IMPLEMENTATION STRATEGY
+
+Start with the foundation rather than implementing every feature at once.
+
+Phase 1 should establish:
+
+1. Go project structure
+2. Configuration
+3. Structured logging
+4. MariaDB connection
+5. Database migrations
+6. HTTP server
+7. Graceful shutdown
+8. Health check endpoint
+9. Basic error handling
+10. Request logging
+11. Authentication foundation
+12. Restaurant/user models
+13. Basic restaurant management endpoints
+14. Test infrastructure
+
+Then progressively implement:
+
+Restaurant management
+        |
+        v
+Menu management
+        |
+        v
+Public menu
+        |
+        v
+Customer/order creation
+        |
+        v
+Order management
+        |
+        v
+Delivery zones
+        |
+        v
+Drivers
+        |
+        v
+Driver assignment
+        |
+        v
+Delivery lifecycle
+        |
+        v
+Notifications / real-time features
+
+Do not implement future phases prematurely.
+
+DELIVERABLES
+
+At the end of each implementation phase, provide:
+
+- The code
+- Database migrations
+- Tests
+- Any required configuration changes
+- A concise explanation of architectural decisions
+- Commands required to run the application locally
+- Commands required to run tests
+- Any new environment variables
+
+The final application should be runnable locally with a MariaDB instance and should have a clear README explaining how to set it up.
+
+MOST IMPORTANT CONSTRAINT
+
+Do not turn this project into a generic enterprise architecture exercise.
+
+The project should feel like well-written idiomatic Go:
+
+- readable
+- explicit
+- boring where appropriate
+- easy to debug
+- easy to test
+- easy for another Go developer to understand
+
+Use the standard library whenever reasonably possible, and introduce external dependencies only when they solve a meaningful problem.

@@ -1,0 +1,21 @@
+# Copy to .envrc (or run scripts/setup-db.sh, which writes it for you).
+# The Makefile reads this file. Values here are examples only.
+
+# development | staging | production
+ENV=development
+PORT=4000
+
+# MariaDB DSN in go-sql-driver/mysql format. parseTime, UTC and strict mode
+# are always enforced by the application, whatever the DSN says.
+DB_DSN=menugo:password@tcp(127.0.0.1:3306)/menugo
+
+# Used by integration tests. The user needs permission to create and drop
+# databases named menugo_test_*. The database name is ignored.
+TEST_DB_DSN=menugo_test:password@tcp(127.0.0.1:3306)/
+
+# Optional, shown with their defaults:
+# DB_MAX_OPEN_CONNS=25
+# DB_MAX_IDLE_CONNS=25
+# DB_MAX_IDLE_TIME=15m
+# AUTH_TOKEN_TTL=24h
+# SHUTDOWN_TIMEOUT=30s
