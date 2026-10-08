@@ -30,6 +30,8 @@ func (app *application) routes() http.Handler {
 
 	mux.HandleFunc("POST /v1/restaurants", app.requireAuthenticatedUser(app.createRestaurantHandler))
 	mux.HandleFunc("GET /v1/restaurants", app.requireAuthenticatedUser(app.listRestaurantsHandler))
+	mux.HandleFunc("GET /v1/restaurants/deleted", app.requireAuthenticatedUser(app.listDeletedRestaurantsHandler))
+	mux.HandleFunc("POST /v1/restaurants/{restaurantID}/restore", app.requireAuthenticatedUser(app.restoreRestaurantHandler))
 	mux.HandleFunc("GET /v1/restaurants/{restaurantID}", app.requireRestaurantRole(data.AnyRole, app.showRestaurantHandler))
 	mux.HandleFunc("PATCH /v1/restaurants/{restaurantID}", app.requireRestaurantRole(data.ManagerRoles, app.updateRestaurantHandler))
 	mux.HandleFunc("DELETE /v1/restaurants/{restaurantID}", app.requireRestaurantRole(data.OwnerRoles, app.deleteRestaurantHandler))

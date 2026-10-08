@@ -36,6 +36,7 @@ type Restaurant struct {
 	Version         int32
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	DeletedAt       time.Time // zero unless deleted
 }
 
 // RestaurantWithRole is a restaurant as seen by one of its members.
@@ -88,16 +89,19 @@ type RestaurantModel struct {
 }
 
 const restaurantColumns = `id, slug, name, description, phone, email, address_line, city, postal_code,
-	currency, timezone, is_published, accepting_orders, version, created_at, updated_at`
+	currency, timezone, is_published, accepting_orders, version, created_at, updated_at, deleted_at`
 
 // scanRestaurant scans restaurantColumns, followed by any extra destinations.
 func scanRestaurant(row interface{ Scan(...any) error }, extra ...any) (*Restaurant, error) {
 	var r Restaurant
+	var deletedAt sql.NullTime
 	dest := []any{
 		&r.ID, &r.Slug, &r.Name, &r.Description, &r.Phone, &r.Email, &r.AddressLine, &r.City,
 		&r.PostalCode, &r.Currency, &r.Timezone, &r.IsPublished, &r.AcceptingOrders, &r.Version, &r.CreatedAt, &r.UpdatedAt,
+		&deletedAt,
 	}
 	err := row.Scan(append(dest, extra...)...)
+	r.DeletedAt = deletedAt.Time
 	return &r, err
 }
 
@@ -320,4 +324,83 @@ func (m RestaurantModel) SetAcceptingOrders(ctx context.Context, id int64, accep
 		return fmt.Errorf("setting accepting_orders: %w", err)
 	}
 	return expectOneRow(result, ErrRecordNotFound)
+}
+
+// ListDeletedForOwner returns the deleted restaurants userID owns, most
+// recently deleted first.
+func (m RestaurantModel) ListDeletedForOwner(ctx context.Context, userID int64) ([]*Restaurant, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	rows, err := m.DB.QueryContext(ctx, `
+		SELECT `+restaurantColumns+`
+		FROM restaurants
+		WHERE deleted_at IS NOT NULL AND id IN (
+			SELECT restaurant_id FROM restaurant_users WHERE user_id = ? AND role = ?
+		)
+		ORDER BY deleted_at DESC, id DESC`, userID, RoleOwner)
+	if err != nil {
+		return nil, fmt.Errorf("listing deleted restaurants: %w", err)
+	}
+	defer rows.Close()
+
+	restaurants := []*Restaurant{}
+	for rows.Next() {
+		r, err := scanRestaurant(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning restaurant: %w", err)
+		}
+		restaurants = append(restaurants, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing deleted restaurants: %w", err)
+	}
+	return restaurants, nil
+}
+
+// Restore undeletes restaurant id, which ownerID must own, and returns it.
+// It comes back unpublished, with its members, menu and orders as they were.
+// If newSlug isn't empty, the restaurant gets that slug; that's needed when
+// another restaurant has taken its old one (ErrDuplicateSlug). Restaurants
+// that aren't deleted, or that ownerID doesn't own, give ErrRecordNotFound.
+func (m RestaurantModel) Restore(ctx context.Context, id, ownerID int64, newSlug string) (*Restaurant, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	tx, err := m.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var owns bool
+	err = tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM restaurants r
+			INNER JOIN restaurant_users ru ON ru.restaurant_id = r.id
+			WHERE r.id = ? AND r.deleted_at IS NOT NULL AND ru.user_id = ? AND ru.role = ?
+		)`, id, ownerID, RoleOwner).Scan(&owns)
+	if err != nil {
+		return nil, fmt.Errorf("checking restaurant ownership: %w", err)
+	}
+	if !owns {
+		return nil, ErrRecordNotFound
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		UPDATE restaurants
+		SET deleted_at = NULL, slug = IF(? = '', slug, ?), version = version + 1, updated_at = ?
+		WHERE id = ? AND deleted_at IS NOT NULL`,
+		newSlug, newSlug, now(), id)
+	if err != nil {
+		if isDuplicateKey(err, "restaurants_live_slug_uk") {
+			return nil, ErrDuplicateSlug
+		}
+		return nil, fmt.Errorf("restoring restaurant: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing restaurant restore: %w", err)
+	}
+	return m.Get(ctx, id)
 }

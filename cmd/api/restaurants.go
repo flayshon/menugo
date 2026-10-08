@@ -11,22 +11,23 @@ import (
 )
 
 type restaurantResponse struct {
-	ID              int64     `json:"id"`
-	Slug            string    `json:"slug"`
-	Name            string    `json:"name"`
-	Description     string    `json:"description"`
-	Phone           string    `json:"phone"`
-	Email           string    `json:"email"`
-	AddressLine     string    `json:"address_line"`
-	City            string    `json:"city"`
-	PostalCode      string    `json:"postal_code"`
-	Currency        string    `json:"currency"`
-	Timezone        string    `json:"timezone"`
-	IsPublished     bool      `json:"is_published"`
-	AcceptingOrders bool      `json:"accepting_orders"`
-	Version         int32     `json:"version"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID              int64      `json:"id"`
+	Slug            string     `json:"slug"`
+	Name            string     `json:"name"`
+	Description     string     `json:"description"`
+	Phone           string     `json:"phone"`
+	Email           string     `json:"email"`
+	AddressLine     string     `json:"address_line"`
+	City            string     `json:"city"`
+	PostalCode      string     `json:"postal_code"`
+	Currency        string     `json:"currency"`
+	Timezone        string     `json:"timezone"`
+	IsPublished     bool       `json:"is_published"`
+	AcceptingOrders bool       `json:"accepting_orders"`
+	Version         int32      `json:"version"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	DeletedAt       *time.Time `json:"deleted_at,omitempty"` // only for deleted restaurants
 }
 
 func newRestaurantResponse(r *data.Restaurant) restaurantResponse {
@@ -47,6 +48,7 @@ func newRestaurantResponse(r *data.Restaurant) restaurantResponse {
 		Version:         r.Version,
 		CreatedAt:       r.CreatedAt,
 		UpdatedAt:       r.UpdatedAt,
+		DeletedAt:       nonZero(r.DeletedAt),
 	}
 }
 
@@ -274,5 +276,82 @@ func (app *application) deleteRestaurantHandler(w http.ResponseWriter, r *http.R
 func setIfPresent[T any](dst *T, src *T) {
 	if src != nil {
 		*dst = *src
+	}
+}
+
+// listDeletedRestaurantsHandler lists the deleted restaurants the caller
+// owns, which they can restore.
+func (app *application) listDeletedRestaurantsHandler(w http.ResponseWriter, r *http.Request) {
+	user := app.contextGetUser(r)
+
+	restaurants, err := app.models.Restaurants.ListDeletedForOwner(r.Context(), user.ID)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	resp := make([]restaurantResponse, 0, len(restaurants))
+	for _, rest := range restaurants {
+		resp = append(resp, newRestaurantResponse(rest))
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelope{"restaurants": resp}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
+// restoreRestaurantHandler undeletes a restaurant the caller owns. It comes
+// back unpublished. The body is optional: {"slug": "..."} gives it a new slug,
+// needed if its old one has been taken since.
+//
+// It doesn't go through requireRestaurantRole, which treats deleted
+// restaurants as missing; the model checks ownership instead.
+func (app *application) restoreRestaurantHandler(w http.ResponseWriter, r *http.Request) {
+	user := app.contextGetUser(r)
+
+	id, err := app.readIDParam(r, "restaurantID")
+	if err != nil {
+		app.notFoundResponse(w, r)
+		return
+	}
+
+	var input struct {
+		Slug string `json:"slug"`
+	}
+	if r.ContentLength != 0 {
+		if err := app.readJSON(w, r, &input); err != nil {
+			app.badRequestResponse(w, r, err)
+			return
+		}
+	}
+
+	if input.Slug != "" {
+		v := validator.New()
+		data.ValidateRestaurant(v, &data.Restaurant{Slug: input.Slug})
+		if msg, ok := v.Errors["slug"]; ok {
+			app.failedValidationResponse(w, r, map[string]string{"slug": msg})
+			return
+		}
+	}
+
+	restaurant, err := app.models.Restaurants.Restore(r.Context(), id, user.ID, input.Slug)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		case errors.Is(err, data.ErrDuplicateSlug):
+			app.failedValidationResponse(w, r, map[string]string{"slug": "is now used by another restaurant; restore with a new slug"})
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	app.contextGetRequestInfo(r).restaurantID = restaurant.ID
+
+	err = app.writeJSON(w, http.StatusOK, envelope{"restaurant": newRestaurantResponse(restaurant)}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
 	}
 }

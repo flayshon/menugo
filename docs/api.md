@@ -625,8 +625,23 @@ Owners only. `204 No Content`. The restaurant is unpublished and disappears
 for everyone: members get `404` on all its endpoints and it leaves their
 `GET /v1/restaurants` list. Its data is kept, so customers can still track
 past orders, and its slug becomes free for a new restaurant. `409` while it
-has orders in progress: finish or cancel them first. There is no undelete
-endpoint yet.
+has orders in progress: finish or cancel them first.
+
+### `GET /v1/restaurants/deleted`
+
+The deleted restaurants the caller owns, most recently deleted first, each
+with `deleted_at`. `{"restaurants": [...]}`.
+
+### `POST /v1/restaurants/{restaurantID}/restore`
+
+Owners only (others get `404`). Undeletes the restaurant: members regain
+access with their roles, and the menu, zones, drivers and orders are as they
+were. It comes back **unpublished**; publish it again when ready. `200`
+`{"restaurant": {...}}`.
+
+The body is optional. If another restaurant has taken the slug in the
+meantime you get `422` (`slug`); restore with a new one:
+`{"slug": "pizza-place-2"}`.
 
 ## Opening hours
 

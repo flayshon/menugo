@@ -271,3 +271,58 @@ func TestRestaurantRoles(t *testing.T) {
 		assertStatus(t, res, http.StatusNotFound)
 	})
 }
+
+func TestRestoreRestaurantAPI(t *testing.T) {
+	t.Parallel()
+	app := newTestApplicationWithDB(t)
+	ts := newTestServer(t, app.routes())
+
+	_, owner := ts.signUp(t, "owner@example.com")
+	_, staff := ts.signUp(t, "staff@example.com")
+	r := ts.createRestaurant(t, owner, "pizza")
+	assertStatus(t, ts.addMember(t, owner, r.ID, "staff@example.com", data.RoleStaff), http.StatusCreated)
+
+	restorePath := restaurantPath(r.ID) + "/restore"
+	assertStatus(t, ts.do(t, http.MethodPost, restorePath, owner, nil), http.StatusNotFound) // not deleted
+
+	assertStatus(t, ts.do(t, http.MethodDelete, restaurantPath(r.ID), owner, nil), http.StatusNoContent)
+	assertStatus(t, ts.do(t, http.MethodGet, restaurantPath(r.ID), staff, nil), http.StatusNotFound)
+
+	res := ts.do(t, http.MethodGet, "/v1/restaurants/deleted", owner, nil)
+	assertStatus(t, res, http.StatusOK)
+	deleted := decode[struct {
+		Restaurants []restaurantResponse `json:"restaurants"`
+	}](t, res.body).Restaurants
+	if len(deleted) != 1 || deleted[0].ID != r.ID || deleted[0].DeletedAt == nil {
+		t.Fatalf("deleted = %+v", deleted)
+	}
+
+	res = ts.do(t, http.MethodGet, "/v1/restaurants/deleted", staff, nil)
+	if list := decode[struct {
+		Restaurants []restaurantResponse `json:"restaurants"`
+	}](t, res.body).Restaurants; len(list) != 0 {
+		t.Errorf("staff see deleted restaurants: %+v", list)
+	}
+	assertStatus(t, ts.do(t, http.MethodPost, restorePath, staff, nil), http.StatusNotFound)
+
+	ts.createRestaurant(t, owner, "pizza") // takes the old slug
+
+	res = ts.do(t, http.MethodPost, restorePath, owner, nil)
+	assertStatus(t, res, http.StatusUnprocessableEntity)
+	if _, ok := validationErrors(t, res.body)["slug"]; !ok {
+		t.Errorf("expected a slug error: %s", res.body)
+	}
+	assertStatus(t, ts.do(t, http.MethodPost, restorePath, owner, map[string]string{"slug": "Bad Slug"}), http.StatusUnprocessableEntity)
+
+	res = ts.do(t, http.MethodPost, restorePath, owner, map[string]string{"slug": "pizza-again"})
+	assertStatus(t, res, http.StatusOK)
+	restored := decode[struct {
+		Restaurant restaurantResponse `json:"restaurant"`
+	}](t, res.body).Restaurant
+	if restored.Slug != "pizza-again" || restored.DeletedAt != nil || restored.IsPublished {
+		t.Errorf("restored = %+v", restored)
+	}
+
+	// The staff member is back in.
+	assertStatus(t, ts.do(t, http.MethodGet, restaurantPath(r.ID), staff, nil), http.StatusOK)
+}
