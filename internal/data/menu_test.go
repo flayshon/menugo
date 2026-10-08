@@ -87,6 +87,15 @@ func newRestaurant(t *testing.T, m Models, slug string) *Restaurant {
 	return r
 }
 
+// publish makes r accept orders.
+func publish(t *testing.T, m Models, r *Restaurant) {
+	t.Helper()
+	r.IsPublished = true
+	if err := m.Restaurants.Update(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newCategory(t *testing.T, m Models, restaurantID int64, name string, sortOrder int32) *Category {
 	t.Helper()
 	c := &Category{RestaurantID: restaurantID, Name: name, SortOrder: sortOrder, IsVisible: true}
@@ -248,30 +257,6 @@ func TestMenuItemUpdateAndAvailability(t *testing.T) {
 	}
 	if got.IsAvailable || got.PriceCents != 5000 || got.Name != "Margherita" || got.Version != 3 {
 		t.Errorf("item = %+v", got)
-	}
-}
-
-func TestDeletingRestaurantDeletesMenu(t *testing.T) {
-	t.Parallel()
-	m := NewModels(testdb.New(t))
-	ctx := context.Background()
-
-	r := newRestaurant(t, m, "pizza")
-	c := newCategory(t, m, r.ID, "Pizzas", 0)
-	newMenuItem(t, m, r.ID, c.ID, "Margherita", 0)
-
-	if err := m.Restaurants.Delete(ctx, r.ID); err != nil {
-		t.Fatal(err)
-	}
-
-	var n int
-	err := m.Restaurants.DB.QueryRow(
-		"SELECT (SELECT COUNT(*) FROM menu_categories) + (SELECT COUNT(*) FROM menu_items)").Scan(&n)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 0 {
-		t.Errorf("%d menu rows left after deleting the restaurant", n)
 	}
 }
 

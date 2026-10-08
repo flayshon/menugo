@@ -540,7 +540,12 @@ nothing is saved.
 
 ### `DELETE /v1/restaurants/{restaurantID}`
 
-Owners only. Deletes the restaurant and all its data. `204 No Content`.
+Owners only. `204 No Content`. The restaurant is unpublished and disappears
+for everyone: members get `404` on all its endpoints and it leaves their
+`GET /v1/restaurants` list. Its data is kept, so customers can still track
+past orders, and its slug becomes free for a new restaurant. `409` while it
+has orders in progress: finish or cancel them first. There is no undelete
+endpoint yet.
 
 ## Members
 

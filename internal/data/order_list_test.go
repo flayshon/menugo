@@ -106,6 +106,7 @@ func TestListOrders(t *testing.T) {
 
 	// Another restaurant's order must never show up.
 	other := newRestaurant(t, f.m, "other")
+	publish(t, f.m, other)
 	otherCategory := newCategory(t, f.m, other.ID, "Menu", 0)
 	otherItem := newMenuItem(t, f.m, other.ID, otherCategory.ID, "Theirs", 0)
 	otherReq := f.request()

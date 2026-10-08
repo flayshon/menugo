@@ -10,7 +10,12 @@ import (
 	"menugo.flayshon.com/internal/validator"
 )
 
-var ErrDuplicateSlug = errors.New("duplicate slug")
+var (
+	ErrDuplicateSlug = errors.New("duplicate slug")
+	// ErrRestaurantBusy means a restaurant can't be deleted because it has
+	// orders in progress.
+	ErrRestaurantBusy = errors.New("restaurant has orders in progress")
+)
 
 type Restaurant struct {
 	ID          int64
@@ -101,7 +106,7 @@ func (m RestaurantModel) InsertWithOwner(ctx context.Context, r *Restaurant, own
 
 	err = tx.QueryRowContext(ctx, query, args...).Scan(&r.ID, &r.Version, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
-		if isDuplicateKey(err, "restaurants_slug_uk") {
+		if isDuplicateKey(err, "restaurants_live_slug_uk") {
 			return ErrDuplicateSlug
 		}
 		return fmt.Errorf("inserting restaurant: %w", err)
@@ -143,7 +148,7 @@ func (m RestaurantModel) GetPublishedBySlug(ctx context.Context, slug string) (*
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	query := `SELECT ` + restaurantColumns + ` FROM restaurants WHERE slug = ? AND is_published`
+	query := `SELECT ` + restaurantColumns + ` FROM restaurants WHERE slug = ? AND is_published AND deleted_at IS NULL`
 
 	r, err := scanRestaurant(m.DB.QueryRowContext(ctx, query, slug))
 	if err != nil {
@@ -178,7 +183,7 @@ func (m RestaurantModel) Update(ctx context.Context, r *Restaurant) error {
 
 	result, err := m.DB.ExecContext(ctx, query, args...)
 	if err != nil {
-		if isDuplicateKey(err, "restaurants_slug_uk") {
+		if isDuplicateKey(err, "restaurants_live_slug_uk") {
 			return ErrDuplicateSlug
 		}
 		return fmt.Errorf("updating restaurant: %w", err)
@@ -193,16 +198,58 @@ func (m RestaurantModel) Update(ctx context.Context, r *Restaurant) error {
 	return nil
 }
 
-// Delete removes a restaurant and, through foreign keys, everything it owns.
+// Delete soft-deletes a restaurant: it is unpublished and hidden from its
+// members (see MembershipModel.Get), but its data, orders above all, is
+// kept, and existing orders stay trackable. Its slug becomes free for reuse.
+// It returns ErrRestaurantBusy while the restaurant has orders in progress.
 func (m RestaurantModel) Delete(ctx context.Context, id int64) error {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	result, err := m.DB.ExecContext(ctx, "DELETE FROM restaurants WHERE id = ?", id)
+	tx, err := m.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// The lock makes concurrent order placement (which share-locks this
+	// row) wait, so no order can sneak in after the check below.
+	var locked int64
+	err = tx.QueryRowContext(ctx,
+		"SELECT id FROM restaurants WHERE id = ? AND deleted_at IS NULL FOR UPDATE", id).Scan(&locked)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrRecordNotFound
+		}
+		return fmt.Errorf("locking restaurant: %w", err)
+	}
+
+	var busy bool
+	err = tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM orders
+			WHERE restaurant_id = ? AND status NOT IN ('delivered', 'picked_up', 'cancelled')
+		)`, id).Scan(&busy)
+	if err != nil {
+		return fmt.Errorf("checking active orders: %w", err)
+	}
+	if busy {
+		return ErrRestaurantBusy
+	}
+
+	deletedAt := now()
+	_, err = tx.ExecContext(ctx, `
+		UPDATE restaurants
+		SET deleted_at = ?, is_published = FALSE, version = version + 1, updated_at = ?
+		WHERE id = ?`, deletedAt, deletedAt, id)
 	if err != nil {
 		return fmt.Errorf("deleting restaurant: %w", err)
 	}
-	return expectOneRow(result, ErrRecordNotFound)
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing restaurant deletion: %w", err)
+	}
+	return nil
 }
 
 // ListForUser returns the restaurants userID is a member of, with their role
@@ -218,6 +265,7 @@ func (m RestaurantModel) ListForUser(ctx context.Context, userID int64) ([]Resta
 			-- Only these columns, so restaurantColumns stays unambiguous.
 			SELECT restaurant_id, role FROM restaurant_users WHERE user_id = ?
 		) ru ON ru.restaurant_id = restaurants.id
+		WHERE deleted_at IS NULL
 		ORDER BY name, id`
 
 	rows, err := m.DB.QueryContext(ctx, query, userID)

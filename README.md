@@ -157,6 +157,13 @@ docs/               API reference
 - **Responses.** Handlers return dedicated response structs, never database
   models. Errors are always `{"error": …}`; validation errors map field names
   to messages.
+- **Deletion.** Deleting a restaurant is a soft delete (`deleted_at`): it
+  disappears for members and customers, but its orders are kept. Slugs are
+  unique only among live restaurants (a generated column, `live_slug`, is
+  NULL once deleted). The membership check every restaurant route goes
+  through ignores deleted restaurants, so access is revoked in one place.
+  Other deletions (menu items, zones, drivers) keep orders intact through
+  copied names and prices.
 - **Concurrency.** Editable records carry a `version`. Updates only apply if
   the version hasn't changed since the record was read (409 otherwise), and
   clients can send `version` to make sure they're editing what they saw.

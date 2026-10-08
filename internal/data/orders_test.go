@@ -340,6 +340,7 @@ func newOrderFixture(t *testing.T) *orderFixture {
 	t.Helper()
 	m := NewModels(testdb.New(t))
 	r := newRestaurant(t, m, "pizza")
+	publish(t, m, r)
 	c := newCategory(t, m, r.ID, "Menu", 0)
 
 	f := &orderFixture{m: m, restaurant: r}

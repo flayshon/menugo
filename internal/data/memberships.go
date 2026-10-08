@@ -68,15 +68,17 @@ type MembershipModel struct {
 	DB *sql.DB
 }
 
-// Get returns userID's membership of restaurantID, or ErrRecordNotFound.
+// Get returns userID's membership of restaurantID, or ErrRecordNotFound. A
+// deleted restaurant has no members: this is what locks everyone out of it.
 func (m MembershipModel) Get(ctx context.Context, restaurantID, userID int64) (*Membership, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
 	query := `
-		SELECT restaurant_id, user_id, role, created_at
-		FROM restaurant_users
-		WHERE restaurant_id = ? AND user_id = ?`
+		SELECT ru.restaurant_id, ru.user_id, ru.role, ru.created_at
+		FROM restaurant_users ru
+		INNER JOIN restaurants r ON r.id = ru.restaurant_id
+		WHERE ru.restaurant_id = ? AND ru.user_id = ? AND r.deleted_at IS NULL`
 
 	var ms Membership
 	err := m.DB.QueryRowContext(ctx, query, restaurantID, userID).

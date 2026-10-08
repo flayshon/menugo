@@ -316,3 +316,29 @@ func TestTrackingTokensAreNotLogged(t *testing.T) {
 		t.Errorf("expected the route pattern in the logs:\n%s", logs.String())
 	}
 }
+
+func TestDeletedRestaurant(t *testing.T) {
+	t.Parallel()
+	s := newShop(t)
+
+	placed := s.placeOrder(t, s.deliveryOrder())
+	id := s.newestOrderID(t)
+
+	res := s.ts.do(t, http.MethodDelete, restaurantPath(s.restaurant.ID), s.owner, nil)
+	assertStatus(t, res, http.StatusConflict)
+
+	assertStatus(t, s.setStatus(t, s.owner, id, map[string]any{"status": "cancelled"}), http.StatusOK)
+	assertStatus(t, s.ts.do(t, http.MethodDelete, restaurantPath(s.restaurant.ID), s.owner, nil), http.StatusNoContent)
+
+	for _, path := range []string{restaurantPath(s.restaurant.ID), orderPath(s.restaurant.ID, ""), menuPath(s.restaurant.ID, "")} {
+		assertStatus(t, s.ts.do(t, http.MethodGet, path, s.owner, nil), http.StatusNotFound)
+	}
+	assertStatus(t, s.ts.do(t, http.MethodGet, "/v1/menus/pizza", "", nil), http.StatusNotFound)
+
+	// The customer can still see what happened to their order.
+	res = s.ts.do(t, http.MethodGet, "/v1/tracking/"+placed.TrackingToken, "", nil)
+	assertStatus(t, res, http.StatusOK)
+
+	// And the slug is free again.
+	s.ts.createRestaurant(t, s.owner, "pizza")
+}

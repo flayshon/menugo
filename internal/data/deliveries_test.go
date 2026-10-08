@@ -378,6 +378,7 @@ func TestListDeliveriesForDriver(t *testing.T) {
 
 	// João also drives for a second restaurant.
 	other := newRestaurant(t, f.m, "second")
+	publish(t, f.m, other)
 	otherCategory := newCategory(t, f.m, other.ID, "Menu", 0)
 	otherItem := newMenuItem(t, f.m, other.ID, otherCategory.ID, "Burger", 0)
 	otherItem.PriceCents = 9000

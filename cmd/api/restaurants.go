@@ -233,7 +233,9 @@ func (app *application) updateRestaurantHandler(w http.ResponseWriter, r *http.R
 	}
 }
 
-// deleteRestaurantHandler deletes the restaurant and everything it owns.
+// deleteRestaurantHandler deletes the restaurant: it disappears for its
+// members and customers, but its orders are kept (see
+// data.RestaurantModel.Delete).
 func (app *application) deleteRestaurantHandler(w http.ResponseWriter, r *http.Request) {
 	ms := app.contextGetMembership(r)
 
@@ -242,6 +244,8 @@ func (app *application) deleteRestaurantHandler(w http.ResponseWriter, r *http.R
 		switch {
 		case errors.Is(err, data.ErrRecordNotFound):
 			app.notFoundResponse(w, r)
+		case errors.Is(err, data.ErrRestaurantBusy):
+			app.conflictResponse(w, r, "the restaurant has orders in progress; finish or cancel them first")
 		default:
 			app.serverErrorResponse(w, r, err)
 		}
