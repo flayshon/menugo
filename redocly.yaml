@@ -1,0 +1,6 @@
+# Configuration for linting docs/openapi.yaml with Redocly CLI (make docs/lint).
+extends:
+  - recommended
+rules:
+  # The spec documents the local development server.
+  no-server-example.com: off

@@ -1,0 +1,2008 @@
+openapi: 3.1.0
+info:
+  title: MenuGo API
+  version: 0.1.0
+  summary: Online ordering and delivery for restaurants.
+  description: |
+    Multi-tenant API for restaurants: menus, a public online menu, customer
+    ordering (delivery and pickup), order management, delivery zones,
+    drivers and real-time updates.
+
+    Conventions (see docs/api.md for the full prose reference):
+
+    - All bodies are JSON. Request bodies are at most 1 MB and may not
+      contain unknown fields (400).
+    - Successful responses wrap the result in a named key, e.g.
+      `{"restaurant": {...}}`. Errors are always `{"error": ...}`: a message,
+      or a map of field names to messages for validation errors (422).
+    - Money is integer minor units of the restaurant's currency
+      (`price_cents: 4500` is R$ 45,00). Times are RFC 3339, UTC.
+    - Restaurants you aren't a member of are 404, exactly like missing ones.
+    - Every response has an `X-Request-ID` header.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: http://localhost:4000
+    description: Local development
+
+tags:
+  - name: Health
+    description: Liveness and database availability.
+  - name: Public
+    description: For customers. No authentication; any origin may call these.
+  - name: Accounts
+    description: Registering, logging in and out, and stream tickets.
+  - name: Restaurants
+    description: Restaurant profiles, deletion and restoring.
+  - name: Members
+    description: Who has which role in a restaurant.
+  - name: Menu
+    description: Categories and items, as staff manage them.
+  - name: Opening hours
+    description: Weekly schedule, time zone and pausing orders.
+  - name: Delivery zones
+    description: Where a restaurant delivers, for how much.
+  - name: Orders
+    description: Orders as the restaurant manages them.
+  - name: Drivers
+    description: Restaurant drivers and their profiles.
+  - name: Deliveries
+    description: Assigning drivers, and drivers' own deliveries.
+  - name: Events
+    description: Server-sent event streams (`text/event-stream`).
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/healthcheck:
+    get:
+      tags: [Health]
+      operationId: healthcheck
+      summary: Whether the API and its database are available
+      security: []
+      responses:
+        "200":
+          description: Available
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "503":
+          description: The database is unreachable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  # ---------------------------------------------------------------- Public
+
+  /v1/menus/{slug}:
+    get:
+      tags: [Public]
+      operationId: getPublicMenu
+      summary: A published restaurant's menu
+      description: |
+        Visible categories with at least one item, in order. Sold-out items
+        are included with `is_available: false`. Cacheable for 60 seconds.
+      security: []
+      parameters: [{ $ref: "#/components/parameters/Slug" }]
+      responses:
+        "200":
+          description: The menu
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [menu]
+                properties:
+                  menu: { $ref: "#/components/schemas/PublicMenu" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /v1/menus/{slug}/delivery-quote:
+    get:
+      tags: [Public]
+      operationId: getDeliveryQuote
+      summary: Whether and how much the restaurant charges to deliver to a postal code
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/Slug" }
+        - name: postal_code
+          in: query
+          required: true
+          schema: { type: string }
+          example: 50030-230
+      responses:
+        "200":
+          description: The restaurant delivers there
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [delivery_quote]
+                properties:
+                  delivery_quote: { $ref: "#/components/schemas/DeliveryQuote" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /v1/menus/{slug}/orders:
+    post:
+      tags: [Public]
+      operationId: placeOrder
+      summary: Place an order
+      description: |
+        Prices, the delivery fee and the total are computed by the server.
+        The tracking token in the response is shown only once.
+      security: []
+      parameters: [{ $ref: "#/components/parameters/Slug" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrderRequest" }
+      responses:
+        "201":
+          description: Order placed
+          headers:
+            Location:
+              schema: { type: string }
+              description: The order's tracking URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [order, tracking_token]
+                properties:
+                  order: { $ref: "#/components/schemas/PublicOrder" }
+                  tracking_token: { type: string, minLength: 26, maxLength: 26 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            The restaurant is closed or paused, or `expected_total_cents`
+            differs from the real total (then `total_cents` is included).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: { type: string }
+                  total_cents: { type: integer, format: int64 }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /v1/tracking/{token}:
+    get:
+      tags: [Public]
+      operationId: trackOrder
+      summary: A customer's order
+      security: []
+      parameters: [{ $ref: "#/components/parameters/TrackingToken" }]
+      responses:
+        "200":
+          description: The order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicOrderEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/tracking/{token}/cancel:
+    post:
+      tags: [Public]
+      operationId: cancelTrackedOrder
+      summary: Cancel an order the restaurant hasn't confirmed yet
+      security: []
+      parameters: [{ $ref: "#/components/parameters/TrackingToken" }]
+      responses:
+        "200":
+          description: Cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicOrderEnvelope" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /v1/tracking/{token}/events:
+    get:
+      tags: [Public, Events]
+      operationId: streamTrackedOrder
+      summary: Stream a customer's order
+      description: |
+        Sends the order (as `GET /v1/tracking/{token}`) as an `order` event
+        at once, then again whenever it changes. Ends when the order is
+        finished.
+      security: []
+      parameters: [{ $ref: "#/components/parameters/TrackingToken" }]
+      responses:
+        "200": { $ref: "#/components/responses/EventStream" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # -------------------------------------------------------------- Accounts
+
+  /v1/users:
+    post:
+      tags: [Accounts]
+      operationId: registerUser
+      summary: Register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 100 }
+                email: { type: string, format: email, maxLength: 254 }
+                password: { type: string, minLength: 8, description: "At most 72 bytes." }
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /v1/users/me:
+    get:
+      tags: [Accounts]
+      operationId: getCurrentUser
+      summary: The authenticated user
+      responses:
+        "200":
+          description: The user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/tokens/authentication:
+    post:
+      tags: [Accounts]
+      operationId: login
+      summary: Log in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              additionalProperties: false
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        "201":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authentication_token]
+                properties:
+                  authentication_token: { $ref: "#/components/schemas/IssuedToken" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+    delete:
+      tags: [Accounts]
+      operationId: logout
+      summary: Log out (revoke the token used)
+      responses:
+        "204": { description: Logged out }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/tokens/stream:
+    post:
+      tags: [Accounts, Events]
+      operationId: createStreamTicket
+      summary: Get a single-use ticket to open one event stream
+      description: |
+        For clients that can't send an Authorization header (a browser's
+        EventSource). Valid for a minute, never longer than the login token.
+      responses:
+        "201":
+          description: Ticket issued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stream_ticket]
+                properties:
+                  stream_ticket:
+                    type: object
+                    required: [ticket, expiry]
+                    properties:
+                      ticket: { type: string }
+                      expiry: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ----------------------------------------------------------- Restaurants
+
+  /v1/restaurants:
+    post:
+      tags: [Restaurants]
+      operationId: createRestaurant
+      summary: Create a restaurant (the caller becomes its owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RestaurantCreate" }
+      responses:
+        "201":
+          description: Created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RestaurantEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    get:
+      tags: [Restaurants]
+      operationId: listMyRestaurants
+      summary: The restaurants the caller belongs to, with their role in each
+      responses:
+        "200":
+          description: Restaurants
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [restaurants]
+                properties:
+                  restaurants:
+                    type: array
+                    items: { $ref: "#/components/schemas/RestaurantWithRole" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/restaurants/deleted:
+    get:
+      tags: [Restaurants]
+      operationId: listDeletedRestaurants
+      summary: Deleted restaurants the caller owns
+      responses:
+        "200":
+          description: Restaurants, each with deleted_at
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [restaurants]
+                properties:
+                  restaurants:
+                    type: array
+                    items: { $ref: "#/components/schemas/Restaurant" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/restaurants/{restaurantID}/restore:
+    post:
+      tags: [Restaurants]
+      operationId: restoreRestaurant
+      summary: Undelete a restaurant (owners only); it comes back unpublished
+      parameters: [{ $ref: "#/components/parameters/RestaurantID" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                slug:
+                  type: string
+                  description: A new slug, if the old one has been taken.
+      responses:
+        "200":
+          description: Restored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RestaurantEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /v1/restaurants/{restaurantID}:
+    parameters: [{ $ref: "#/components/parameters/RestaurantID" }]
+    get:
+      tags: [Restaurants]
+      operationId: getRestaurant
+      summary: A restaurant (any member)
+      responses:
+        "200":
+          description: The restaurant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RestaurantEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Restaurants]
+      operationId: updateRestaurant
+      summary: Update a restaurant (owners, admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RestaurantUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RestaurantEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      tags: [Restaurants]
+      operationId: deleteRestaurant
+      summary: Delete a restaurant (owners); its data is kept and it can be restored
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/restaurants/{restaurantID}/opening-hours:
+    parameters: [{ $ref: "#/components/parameters/RestaurantID" }]
+    get:
+      tags: [Opening hours]
+      operationId: getOpeningHours
+      summary: The weekly schedule and whether the restaurant is open (staff and up)
+      responses:
+        "200": { $ref: "#/components/responses/OpeningHours" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Opening hours]
+      operationId: replaceOpeningHours
+      summary: Replace the weekly schedule (owners, admins); empty means always open
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [opening_hours]
+              additionalProperties: false
+              properties:
+                opening_hours:
+                  type: array
+                  maxItems: 50
+                  items: { $ref: "#/components/schemas/OpeningInterval" }
+      responses:
+        "200": { $ref: "#/components/responses/OpeningHours" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /v1/restaurants/{restaurantID}/accepting-orders:
+    put:
+      tags: [Opening hours]
+      operationId: setAcceptingOrders
+      summary: Pause or resume ordering (staff and up)
+      parameters: [{ $ref: "#/components/parameters/RestaurantID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accepting_orders]
+              additionalProperties: false
+              properties:
+                accepting_orders: { type: boolean }
+      responses:
+        "200": { $ref: "#/components/responses/OpeningHours" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  # --------------------------------------------------------------- Members
+
+  /v1/restaurants/{restaurantID}/members:
+    parameters: [{ $ref: "#/components/parameters/RestaurantID" }]
+    get:
+      tags: [Members]
+      operationId: listMembers
+      summary: Members (owners, admins)
+      responses:
+        "200":
+          description: Members
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [members]
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: "#/components/schemas/Member" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Members]
+      operationId: addMember
+      summary: Give a registered user a role below your own
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              additionalProperties: false
+              properties:
+                email: { type: string, format: email }
+                role: { $ref: "#/components/schemas/Role" }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [member]
+                properties:
+                  member: { $ref: "#/components/schemas/Member" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /v1/restaurants/{restaurantID}/members/{userID}:
+    delete:
+      tags: [Members]
+      operationId: removeMember
+      summary: Remove a member whose role is below your own
+      parameters:
+        - { $ref: "#/components/parameters/RestaurantID" }
+        - { $ref: "#/components/parameters/UserID" }
+      responses:
+        "204": { description: Removed }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # ------------------------------------------------------------------ Menu
+
+  /v1/restaurants/{restaurantID}/menu:
+    get:
+      tags: [Menu]
+      operationId: getMenu
+      summary: The whole menu, including hidden categories and sold-out items (staff and up)
+      parameters: [{ $ref: "#/components/parameters/RestaurantID" }]
+      responses:
+        "200":
+          description: The menu
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [menu]
+                properties:
+                  menu:
+                    type: object
+                    required: [categories]
+                    properties:
+                      categories:
+                        type: array
+                        items: { $ref: "#/components/schemas/CategoryWithItems" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/restaurants/{restaurantID}/menu/categories:
+    parameters: [{ $ref: "#/components/parameters/RestaurantID" }]
+    get:
+      tags: [Menu]
+      operationId: listCategories
+      summary: Categories in menu order (staff and up)
+      responses:
+        "200":
+          description: Categories
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [categories]
+                properties:
+                  categories:
+                    type: array
+                    items: { $ref: "#/components/schemas/Category" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Menu]
+      operationId: createCategory
+      summary: Create a category (owners, admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategoryInput" }
+      responses:
+        "201":
+          description: Created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CategoryEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /v1/restaurants/{restaurantID}/menu/categories/{categoryID}:
+    parameters:
+      - { $ref: "#/components/parameters/RestaurantID" }
+      - { $ref: "#/components/parameters/CategoryID" }
+    get:
+      tags: [Menu]
+      operationId: getCategory
+      summary: A category (staff and up)
+      responses:
+        "200":
+          description: The category
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CategoryEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Menu]
+      operationId: updateCategory
+      summary: Update a category (owners, admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/CategoryInput" }
+                - { $ref: "#/components/schemas/VersionCheck" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CategoryEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      tags: [Menu]
+      operationId: deleteCategory
+      summary: Delete an empty category (owners, admins)
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/restaurants/{restaurantID}/menu/items:
+    parameters: [{ $ref: "#/components/parameters/RestaurantID" }]
+    get:
+      tags: [Menu]
+      operationId: listMenuItems
+      summary: Menu items, optionally of one category (staff and up)
+      parameters:
+        - name: category_id
+          in: query
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "200":
+          description: Items
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/MenuItem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    post:
+      tags: [Menu]
+      operationId: createMenuItem
+      summary: Create a menu item (owners, admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MenuItemCreate" }
+      responses:
+        "201":
+          description: Created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuItemEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /v1/restaurants/{restaurantID}/menu/items/{itemID}:
+    parameters:
+      - { $ref: "#/components/parameters/RestaurantID" }
+      - { $ref: "#/components/parameters/ItemID" }
+    get:
+      tags: [Menu]
+      operationId: getMenuItem
+      summary: A menu item (staff and up)
+      responses:
+        "200":
+          description: The item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuItemEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Menu]
+      operationId: updateMenuItem
+      summary: Update a menu item, possibly moving it to another category (owners, admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MenuItemUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuItemEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      tags: [Menu]
+      operationId: deleteMenuItem
+      summary: Delete a menu item (owners, admins)
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/restaurants/{restaurantID}/menu/items/{itemID}/availability:
+    put:
+      tags: [Menu]
+      operationId: setMenuItemAvailability
+      summary: Mark an item sold out or available again (staff and up)
+      parameters:
+        - { $ref: "#/components/parameters/RestaurantID" }
+        - { $ref: "#/components/parameters/ItemID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_available]
+              additionalProperties: false
+              properties:
+                is_available: { type: boolean }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MenuItemEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  # -------------------------------------------------------- Delivery zones
+
+  /v1/restaurants/{restaurantID}/delivery-zones:
+    parameters: [{ $ref: "#/components/parameters/RestaurantID" }]
+    get:
+      tags: [Delivery zones]
+      operationId: listZones
+      summary: Delivery zones (staff and up)
+      responses:
+        "200":
+          description: Zones
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [delivery_zones]
+                properties:
+                  delivery_zones:
+                    type: array
+                    items: { $ref: "#/components/schemas/DeliveryZone" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Delivery zones]
+      operationId: createZone
+      summary: Create a delivery zone (owners, admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeliveryZoneCreate" }
+      responses:
+        "201":
+          description: Created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryZoneEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /v1/restaurants/{restaurantID}/delivery-zones/{zoneID}:
+    parameters:
+      - { $ref: "#/components/parameters/RestaurantID" }
+      - { $ref: "#/components/parameters/ZoneID" }
+    get:
+      tags: [Delivery zones]
+      operationId: getZone
+      summary: A delivery zone (staff and up)
+      responses:
+        "200":
+          description: The zone
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryZoneEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Delivery zones]
+      operationId: updateZone
+      summary: Update a delivery zone; postal_codes, if sent, replaces the list (owners, admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeliveryZoneUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryZoneEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      tags: [Delivery zones]
+      operationId: deleteZone
+      summary: Delete a delivery zone (owners, admins)
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ---------------------------------------------------------------- Orders
+
+  /v1/restaurants/{restaurantID}/orders:
+    get:
+      tags: [Orders]
+      operationId: listOrders
+      summary: Orders, with items, newest first (staff and up)
+      parameters:
+        - { $ref: "#/components/parameters/RestaurantID" }
+        - name: status
+          in: query
+          description: Comma-separated statuses.
+          schema: { type: string }
+          example: pending,confirmed,preparing
+        - name: fulfillment
+          in: query
+          schema: { $ref: "#/components/schemas/Fulfillment" }
+        - name: from
+          in: query
+          description: Placed at or after.
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: Placed before.
+          schema: { type: string, format: date-time }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [created_at, -created_at], default: -created_at }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+      responses:
+        "200":
+          description: A page of orders
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [orders, metadata]
+                properties:
+                  orders:
+                    type: array
+                    items: { $ref: "#/components/schemas/Order" }
+                  metadata: { $ref: "#/components/schemas/Metadata" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /v1/restaurants/{restaurantID}/orders/{orderID}:
+    parameters:
+      - { $ref: "#/components/parameters/RestaurantID" }
+      - { $ref: "#/components/parameters/OrderID" }
+    get:
+      tags: [Orders]
+      operationId: getOrder
+      summary: An order, with its history and current delivery (staff and up)
+      responses:
+        "200":
+          description: The order
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Orders]
+      operationId: changeOrderStatus
+      summary: Move an order to another status (staff and up)
+      description: Only moves allowed by the order lifecycle succeed; see `next_statuses`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              additionalProperties: false
+              properties:
+                status: { $ref: "#/components/schemas/OrderStatus" }
+                reason:
+                  type: string
+                  maxLength: 255
+                  description: Only when cancelling; shown to the customer.
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /v1/restaurants/{restaurantID}/orders/{orderID}/driver:
+    parameters:
+      - { $ref: "#/components/parameters/RestaurantID" }
+      - { $ref: "#/components/parameters/OrderID" }
+    put:
+      tags: [Deliveries]
+      operationId: assignDriver
+      summary: Assign or reassign the order's driver (staff and up)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [driver_id]
+              additionalProperties: false
+              properties:
+                driver_id: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Assigned
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [delivery]
+                properties:
+                  delivery: { $ref: "#/components/schemas/Delivery" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      tags: [Deliveries]
+      operationId: unassignDriver
+      summary: Take the driver off the order (staff and up)
+      responses:
+        "204": { description: Unassigned }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --------------------------------------------------------------- Drivers
+
+  /v1/restaurants/{restaurantID}/drivers:
+    parameters: [{ $ref: "#/components/parameters/RestaurantID" }]
+    get:
+      tags: [Drivers]
+      operationId: listDrivers
+      summary: Drivers (staff and up)
+      parameters:
+        - name: active
+          in: query
+          schema: { type: string, enum: ["true", "false"], default: "false" }
+          description: "true lists only drivers who can take deliveries."
+      responses:
+        "200":
+          description: Drivers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [drivers]
+                properties:
+                  drivers:
+                    type: array
+                    items: { $ref: "#/components/schemas/Driver" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    post:
+      tags: [Drivers]
+      operationId: createDriver
+      summary: Make a registered user a driver (owners, admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DriverCreate" }
+      responses:
+        "201":
+          description: Created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DriverEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /v1/restaurants/{restaurantID}/drivers/{driverID}:
+    parameters:
+      - { $ref: "#/components/parameters/RestaurantID" }
+      - { $ref: "#/components/parameters/DriverID" }
+    get:
+      tags: [Drivers]
+      operationId: getDriver
+      summary: A driver (staff and up)
+      responses:
+        "200":
+          description: The driver
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DriverEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Drivers]
+      operationId: updateDriver
+      summary: Update a driver's profile (owners, admins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DriverUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DriverEnvelope" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      tags: [Drivers]
+      operationId: deleteDriver
+      summary: Remove a driver and their driver role (owners, admins)
+      responses:
+        "204": { description: Removed }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/me/deliveries:
+    get:
+      tags: [Deliveries]
+      operationId: listMyDeliveries
+      summary: The caller's deliveries, across restaurants, newest first
+      parameters:
+        - name: status
+          in: query
+          description: Comma-separated delivery statuses, e.g. assigned,picked_up.
+          schema: { type: string }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+      responses:
+        "200":
+          description: A page of deliveries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deliveries, metadata]
+                properties:
+                  deliveries:
+                    type: array
+                    items: { $ref: "#/components/schemas/DriverDelivery" }
+                  metadata: { $ref: "#/components/schemas/Metadata" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /v1/me/deliveries/{deliveryID}:
+    parameters: [{ $ref: "#/components/parameters/DeliveryID" }]
+    get:
+      tags: [Deliveries]
+      operationId: getMyDelivery
+      summary: One of the caller's deliveries
+      responses:
+        "200": { $ref: "#/components/responses/DriverDelivery" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Deliveries]
+      operationId: updateMyDelivery
+      summary: Report pickup or delivery; the order moves with it
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              additionalProperties: false
+              properties:
+                status: { type: string, enum: [picked_up, delivered] }
+      responses:
+        "200": { $ref: "#/components/responses/DriverDelivery" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  # ---------------------------------------------------------------- Events
+
+  /v1/restaurants/{restaurantID}/events:
+    get:
+      tags: [Events]
+      operationId: streamRestaurantEvents
+      summary: Stream what happens to the restaurant's orders (staff and up)
+      description: |
+        Events: order.placed, order.status_changed, delivery.assigned,
+        delivery.unassigned; data is a RestaurantEvent. Send Last-Event-ID
+        (or last_event_id) to catch up on missed events.
+      security:
+        - bearerAuth: []
+        - streamTicket: []
+      parameters:
+        - { $ref: "#/components/parameters/RestaurantID" }
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string }
+        - name: last_event_id
+          in: query
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": 
+          description: An event stream (see the EventStream response). Each event\'s data is a RestaurantEvent.
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/RestaurantEvent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/me/events:
+    get:
+      tags: [Events]
+      operationId: streamMyEvents
+      summary: Stream the caller's delivery assignments and their orders' status changes
+      description: Data is a DriverEvent.
+      security:
+        - bearerAuth: []
+        - streamTicket: []
+      responses:
+        "200": 
+          description: An event stream (see the EventStream response). Each event\'s data is a DriverEvent.
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/DriverEvent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: A token from POST /v1/tokens/authentication.
+    streamTicket:
+      type: apiKey
+      in: query
+      name: ticket
+      description: A single-use ticket from POST /v1/tokens/stream. Event streams only.
+
+  parameters:
+    Slug:
+      name: slug
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$", maxLength: 63 }
+    TrackingToken:
+      name: token
+      in: path
+      required: true
+      schema: { type: string, minLength: 26, maxLength: 26 }
+    RestaurantID:
+      name: restaurantID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/ID" }
+    UserID:
+      name: userID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/ID" }
+    CategoryID:
+      name: categoryID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/ID" }
+    ItemID:
+      name: itemID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/ID" }
+    ZoneID:
+      name: zoneID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/ID" }
+    OrderID:
+      name: orderID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/ID" }
+    DriverID:
+      name: driverID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/ID" }
+    DeliveryID:
+      name: deliveryID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/ID" }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 10000000, default: 1 }
+    PageSize:
+      name: page_size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  responses:
+    BadRequest:
+      description: Malformed JSON, wrong types or unknown fields
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing, invalid or expired credentials
+      headers:
+        WWW-Authenticate: { schema: { type: string } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Your role in this restaurant doesn't allow this
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Not found, or a restaurant you aren't a member of
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Not allowed in the current state, or an edit conflict
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ValidationError" }
+    TooManyRequests:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds to wait.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    EventStream:
+      description: |
+        A server-sent event stream. Each message has `event:` (its type),
+        `data:` (JSON) and usually `id:`. A `: ping` comment is sent every 25
+        seconds. An `end` event means access was revoked: don't reconnect.
+      content:
+        text/event-stream:
+          schema: { type: string }
+    OpeningHours:
+      description: The schedule and whether the restaurant is open
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [opening_hours]
+            properties:
+              opening_hours: { $ref: "#/components/schemas/OpeningHours" }
+    DriverDelivery:
+      description: The delivery
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [delivery]
+            properties:
+              delivery: { $ref: "#/components/schemas/DriverDelivery" }
+
+  schemas:
+    ID:
+      type: integer
+      format: int64
+      minimum: 1
+    Cents:
+      type: integer
+      format: int64
+      description: Minor units of the restaurant's currency.
+    Timestamp:
+      type: string
+      format: date-time
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    ValidationError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: { type: string }
+          example: { email: must be a valid email address }
+    Health:
+      type: object
+      required: [status, system_info]
+      properties:
+        status: { type: string, enum: [available, unavailable] }
+        system_info:
+          type: object
+          properties:
+            environment: { type: string }
+            version: { type: string }
+    Metadata:
+      type: object
+      required: [total_records]
+      properties:
+        current_page: { type: integer }
+        page_size: { type: integer }
+        first_page: { type: integer }
+        last_page: { type: integer }
+        total_records: { type: integer }
+    VersionCheck:
+      type: object
+      properties:
+        version:
+          type: integer
+          description: If sent, the update fails with 409 unless it's the current version.
+
+    Role:
+      type: string
+      enum: [restaurant_owner, restaurant_admin, restaurant_staff, driver]
+    Fulfillment:
+      type: string
+      enum: [delivery, pickup]
+    OrderStatus:
+      type: string
+      enum: [pending, confirmed, preparing, ready_for_delivery, ready_for_pickup,
+             out_for_delivery, delivered, picked_up, cancelled]
+    DeliveryStatus:
+      type: string
+      enum: [assigned, picked_up, delivered, unassigned, cancelled]
+
+    User:
+      type: object
+      required: [id, name, email, created_at]
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        name: { type: string }
+        email: { type: string, format: email }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+    UserEnvelope:
+      type: object
+      required: [user]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+    IssuedToken:
+      type: object
+      required: [token, expiry]
+      properties:
+        token: { type: string }
+        expiry: { $ref: "#/components/schemas/Timestamp" }
+
+    RestaurantFields:
+      type: object
+      properties:
+        slug: { type: string, pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$", minLength: 3, maxLength: 63 }
+        name: { type: string, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        phone: { type: string, maxLength: 30 }
+        email: { type: string, maxLength: 254, description: Empty or a valid email. }
+        address_line: { type: string, maxLength: 255 }
+        city: { type: string, maxLength: 100 }
+        postal_code: { type: string, maxLength: 20 }
+        currency: { type: string, enum: [BRL, USD, EUR, GBP, CAD, AUD] }
+        timezone: { type: string, example: America/Recife, description: IANA time zone. }
+        is_published: { type: boolean }
+    RestaurantCreate:
+      allOf:
+        - { $ref: "#/components/schemas/RestaurantFields" }
+        - type: object
+          required: [slug, name, currency]
+    RestaurantUpdate:
+      allOf:
+        - { $ref: "#/components/schemas/RestaurantFields" }
+        - { $ref: "#/components/schemas/VersionCheck" }
+        - type: object
+          properties:
+            accepting_orders: { type: boolean }
+    Restaurant:
+      allOf:
+        - { $ref: "#/components/schemas/RestaurantFields" }
+        - type: object
+          required: [id, slug, name, currency, timezone, is_published, accepting_orders, version, created_at, updated_at]
+          properties:
+            id: { $ref: "#/components/schemas/ID" }
+            accepting_orders: { type: boolean }
+            version: { type: integer }
+            created_at: { $ref: "#/components/schemas/Timestamp" }
+            updated_at: { $ref: "#/components/schemas/Timestamp" }
+            deleted_at:
+              $ref: "#/components/schemas/Timestamp"
+              description: Only on deleted restaurants.
+    RestaurantWithRole:
+      allOf:
+        - { $ref: "#/components/schemas/Restaurant" }
+        - type: object
+          required: [role]
+          properties:
+            role: { $ref: "#/components/schemas/Role" }
+    RestaurantEnvelope:
+      type: object
+      required: [restaurant]
+      properties:
+        restaurant: { $ref: "#/components/schemas/Restaurant" }
+
+    Member:
+      type: object
+      required: [user_id, name, email, role, created_at]
+      properties:
+        user_id: { $ref: "#/components/schemas/ID" }
+        name: { type: string }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+
+    OpeningInterval:
+      type: object
+      required: [day, opens_at, closes_at]
+      properties:
+        day: { type: string, enum: [sunday, monday, tuesday, wednesday, thursday, friday, saturday] }
+        opens_at: { type: string, pattern: "^\\d{2}:\\d{2}$", example: "18:00" }
+        closes_at:
+          type: string
+          pattern: "^\\d{2}:\\d{2}$"
+          example: "02:00"
+          description: May be 24:00. If not after opens_at, the interval runs past midnight.
+    OpeningHours:
+      type: object
+      required: [timezone, accepting_orders, opening_hours, is_open]
+      properties:
+        timezone: { type: string }
+        accepting_orders: { type: boolean }
+        opening_hours:
+          type: array
+          items: { $ref: "#/components/schemas/OpeningInterval" }
+        is_open: { type: boolean }
+
+    CategoryInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 100 }
+        description: { type: string, maxLength: 500 }
+        sort_order: { type: integer, minimum: 0, maximum: 1000000 }
+        is_visible: { type: boolean, default: true }
+        version: { type: integer }
+    Category:
+      type: object
+      required: [id, name, description, sort_order, is_visible, version, created_at, updated_at]
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        name: { type: string }
+        description: { type: string }
+        sort_order: { type: integer }
+        is_visible: { type: boolean }
+        version: { type: integer }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        updated_at: { $ref: "#/components/schemas/Timestamp" }
+    CategoryEnvelope:
+      type: object
+      required: [category]
+      properties:
+        category: { $ref: "#/components/schemas/Category" }
+    CategoryWithItems:
+      allOf:
+        - { $ref: "#/components/schemas/Category" }
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/MenuItem" }
+
+    MenuItemFields:
+      type: object
+      properties:
+        category_id: { $ref: "#/components/schemas/ID" }
+        name: { type: string, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        price_cents: { $ref: "#/components/schemas/Cents" }
+        image_url: { type: string, format: uri, maxLength: 2048, description: Empty or an absolute http(s) URL. }
+        is_available: { type: boolean, default: true }
+        sort_order: { type: integer, minimum: 0, maximum: 1000000 }
+    MenuItemCreate:
+      allOf:
+        - { $ref: "#/components/schemas/MenuItemFields" }
+        - type: object
+          required: [category_id, name, price_cents]
+    MenuItemUpdate:
+      allOf:
+        - { $ref: "#/components/schemas/MenuItemFields" }
+        - { $ref: "#/components/schemas/VersionCheck" }
+    MenuItem:
+      allOf:
+        - { $ref: "#/components/schemas/MenuItemFields" }
+        - type: object
+          required: [id, category_id, name, description, price_cents, image_url, is_available, sort_order, version, created_at, updated_at]
+          properties:
+            id: { $ref: "#/components/schemas/ID" }
+            version: { type: integer }
+            created_at: { $ref: "#/components/schemas/Timestamp" }
+            updated_at: { $ref: "#/components/schemas/Timestamp" }
+    MenuItemEnvelope:
+      type: object
+      required: [item]
+      properties:
+        item: { $ref: "#/components/schemas/MenuItem" }
+
+    PublicMenu:
+      type: object
+      required: [restaurant, opening_hours, categories]
+      properties:
+        restaurant:
+          type: object
+          properties:
+            slug: { type: string }
+            name: { type: string }
+            description: { type: string }
+            phone: { type: string }
+            address_line: { type: string }
+            city: { type: string }
+            postal_code: { type: string }
+            currency: { type: string }
+        opening_hours: { $ref: "#/components/schemas/OpeningHours" }
+        categories:
+          type: array
+          items:
+            type: object
+            required: [id, name, description, items]
+            properties:
+              id: { $ref: "#/components/schemas/ID" }
+              name: { type: string }
+              description: { type: string }
+              items:
+                type: array
+                items:
+                  type: object
+                  required: [id, name, description, price_cents, image_url, is_available]
+                  properties:
+                    id: { $ref: "#/components/schemas/ID" }
+                    name: { type: string }
+                    description: { type: string }
+                    price_cents: { $ref: "#/components/schemas/Cents" }
+                    image_url: { type: string }
+                    is_available: { type: boolean }
+
+    DeliveryQuote:
+      type: object
+      required: [postal_code, fee_cents, min_order_cents, currency]
+      properties:
+        postal_code: { type: string, description: Normalized. }
+        fee_cents: { $ref: "#/components/schemas/Cents" }
+        min_order_cents: { $ref: "#/components/schemas/Cents" }
+        currency: { type: string }
+
+    DeliveryZoneFields:
+      type: object
+      properties:
+        name: { type: string, maxLength: 100 }
+        fee_cents: { $ref: "#/components/schemas/Cents" }
+        min_order_cents: { $ref: "#/components/schemas/Cents" }
+        is_active: { type: boolean, default: true }
+        postal_codes:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          description: Entries match postal codes starting with them; the longest match wins.
+          items: { type: string }
+    DeliveryZoneCreate:
+      allOf:
+        - { $ref: "#/components/schemas/DeliveryZoneFields" }
+        - type: object
+          required: [name, fee_cents, postal_codes]
+    DeliveryZoneUpdate:
+      allOf:
+        - { $ref: "#/components/schemas/DeliveryZoneFields" }
+        - { $ref: "#/components/schemas/VersionCheck" }
+    DeliveryZone:
+      allOf:
+        - { $ref: "#/components/schemas/DeliveryZoneFields" }
+        - type: object
+          required: [id, name, fee_cents, min_order_cents, is_active, postal_codes, version, created_at, updated_at]
+          properties:
+            id: { $ref: "#/components/schemas/ID" }
+            version: { type: integer }
+            created_at: { $ref: "#/components/schemas/Timestamp" }
+            updated_at: { $ref: "#/components/schemas/Timestamp" }
+    DeliveryZoneEnvelope:
+      type: object
+      required: [delivery_zone]
+      properties:
+        delivery_zone: { $ref: "#/components/schemas/DeliveryZone" }
+
+    OrderRequest:
+      type: object
+      required: [fulfillment, customer, items]
+      additionalProperties: false
+      properties:
+        fulfillment: { $ref: "#/components/schemas/Fulfillment" }
+        customer:
+          type: object
+          required: [name, phone]
+          additionalProperties: false
+          properties:
+            name: { type: string, maxLength: 100 }
+            phone: { type: string, description: 8–15 digits; spaces and punctuation are ignored. }
+            email: { type: string }
+        address:
+          description: Required for delivery; must be absent for pickup.
+          type: object
+          required: [line, city, postal_code]
+          additionalProperties: false
+          properties:
+            line: { type: string, maxLength: 255 }
+            details: { type: string, maxLength: 255 }
+            city: { type: string, maxLength: 100 }
+            postal_code: { type: string }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: object
+            required: [item_id, quantity]
+            additionalProperties: false
+            properties:
+              item_id: { $ref: "#/components/schemas/ID" }
+              quantity: { type: integer, minimum: 1, maximum: 99 }
+              notes: { type: string, maxLength: 200 }
+        notes: { type: string, maxLength: 500 }
+        expected_total_cents:
+          $ref: "#/components/schemas/Cents"
+          description: The total the customer was shown; the order is refused (409) if it differs.
+
+    PublicOrder:
+      type: object
+      required: [status, fulfillment, restaurant, items, subtotal_cents, delivery_fee_cents, total_cents, currency, notes, placed_at, status_history, can_cancel, driver]
+      properties:
+        status: { $ref: "#/components/schemas/OrderStatus" }
+        fulfillment: { $ref: "#/components/schemas/Fulfillment" }
+        restaurant:
+          type: object
+          properties:
+            slug: { type: string }
+            name: { type: string }
+            phone: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              quantity: { type: integer }
+              unit_price_cents: { $ref: "#/components/schemas/Cents" }
+              line_total_cents: { $ref: "#/components/schemas/Cents" }
+              notes: { type: string }
+        subtotal_cents: { $ref: "#/components/schemas/Cents" }
+        delivery_fee_cents: { $ref: "#/components/schemas/Cents" }
+        total_cents: { $ref: "#/components/schemas/Cents" }
+        currency: { type: string }
+        notes: { type: string }
+        placed_at: { $ref: "#/components/schemas/Timestamp" }
+        status_history:
+          type: array
+          items:
+            type: object
+            required: [status, at]
+            properties:
+              status: { $ref: "#/components/schemas/OrderStatus" }
+              reason: { type: string }
+              at: { $ref: "#/components/schemas/Timestamp" }
+        can_cancel: { type: boolean }
+        driver:
+          type: [string, "null"]
+          description: The driver's first name while the order is assigned or on its way.
+    PublicOrderEnvelope:
+      type: object
+      required: [order]
+      properties:
+        order: { $ref: "#/components/schemas/PublicOrder" }
+
+    Order:
+      type: object
+      required: [id, status, fulfillment, customer, address, delivery_zone_id, items, subtotal_cents, delivery_fee_cents, total_cents, currency, notes, next_statuses, version, created_at, updated_at]
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        status: { $ref: "#/components/schemas/OrderStatus" }
+        fulfillment: { $ref: "#/components/schemas/Fulfillment" }
+        customer:
+          type: object
+          properties:
+            id: { $ref: "#/components/schemas/ID" }
+            name: { type: string }
+            phone: { type: string }
+            email: { type: string }
+        address:
+          description: null for pickup orders.
+          oneOf:
+            - { $ref: "#/components/schemas/Address" }
+            - type: "null"
+        delivery_zone_id:
+          oneOf:
+            - { $ref: "#/components/schemas/ID" }
+            - type: "null"
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { $ref: "#/components/schemas/ID" }
+              menu_item_id:
+                description: null once deleted from the menu.
+                oneOf:
+                  - { $ref: "#/components/schemas/ID" }
+                  - type: "null"
+              name: { type: string }
+              quantity: { type: integer }
+              unit_price_cents: { $ref: "#/components/schemas/Cents" }
+              line_total_cents: { $ref: "#/components/schemas/Cents" }
+              notes: { type: string }
+        subtotal_cents: { $ref: "#/components/schemas/Cents" }
+        delivery_fee_cents: { $ref: "#/components/schemas/Cents" }
+        total_cents: { $ref: "#/components/schemas/Cents" }
+        currency: { type: string }
+        notes: { type: string }
+        status_history:
+          description: Single orders only.
+          type: array
+          items:
+            type: object
+            properties:
+              from:
+                oneOf:
+                  - { $ref: "#/components/schemas/OrderStatus" }
+                  - type: "null"
+              to: { $ref: "#/components/schemas/OrderStatus" }
+              actor_type: { type: string, enum: [customer, user, system] }
+              actor_user_id:
+                oneOf:
+                  - { $ref: "#/components/schemas/ID" }
+                  - type: "null"
+              reason: { type: string }
+              at: { $ref: "#/components/schemas/Timestamp" }
+        delivery:
+          description: Single orders only; the current driver assignment, if any.
+          $ref: "#/components/schemas/Delivery"
+        next_statuses:
+          type: array
+          items: { $ref: "#/components/schemas/OrderStatus" }
+        version: { type: integer }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        updated_at: { $ref: "#/components/schemas/Timestamp" }
+    OrderEnvelope:
+      type: object
+      required: [order]
+      properties:
+        order: { $ref: "#/components/schemas/Order" }
+    Address:
+      type: object
+      properties:
+        line: { type: string }
+        details: { type: string }
+        city: { type: string }
+        postal_code: { type: string }
+
+    DriverFields:
+      type: object
+      properties:
+        name: { type: string, maxLength: 100 }
+        phone: { type: string, description: 8–15 digits. }
+        vehicle: { type: string, maxLength: 100 }
+        is_active: { type: boolean, default: true }
+    DriverCreate:
+      allOf:
+        - { $ref: "#/components/schemas/DriverFields" }
+        - type: object
+          required: [email, phone]
+          properties:
+            email: { type: string, format: email, description: Of a registered user. }
+    DriverUpdate:
+      allOf:
+        - { $ref: "#/components/schemas/DriverFields" }
+        - { $ref: "#/components/schemas/VersionCheck" }
+    Driver:
+      allOf:
+        - { $ref: "#/components/schemas/DriverFields" }
+        - type: object
+          required: [id, user_id, email, name, phone, vehicle, is_active, version, created_at, updated_at]
+          properties:
+            id: { $ref: "#/components/schemas/ID" }
+            user_id: { $ref: "#/components/schemas/ID" }
+            email: { type: string }
+            version: { type: integer }
+            created_at: { $ref: "#/components/schemas/Timestamp" }
+            updated_at: { $ref: "#/components/schemas/Timestamp" }
+    DriverEnvelope:
+      type: object
+      required: [driver]
+      properties:
+        driver: { $ref: "#/components/schemas/Driver" }
+
+    Delivery:
+      type: object
+      required: [id, status, driver, assigned_by_user_id, assigned_at, picked_up_at, delivered_at, ended_at]
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        status: { $ref: "#/components/schemas/DeliveryStatus" }
+        driver:
+          description: null if the driver has since been removed.
+          oneOf:
+            - type: object
+              properties:
+                id: { $ref: "#/components/schemas/ID" }
+                name: { type: string }
+                phone: { type: string }
+                vehicle: { type: string }
+            - type: "null"
+        assigned_by_user_id:
+          oneOf:
+            - { $ref: "#/components/schemas/ID" }
+            - type: "null"
+        assigned_at: { $ref: "#/components/schemas/Timestamp" }
+        picked_up_at: { type: [string, "null"], format: date-time }
+        delivered_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+
+    DriverDelivery:
+      type: object
+      required: [id, status, assigned_at, restaurant, order]
+      properties:
+        id: { $ref: "#/components/schemas/ID" }
+        status: { $ref: "#/components/schemas/DeliveryStatus" }
+        assigned_at: { $ref: "#/components/schemas/Timestamp" }
+        picked_up_at: { type: [string, "null"], format: date-time }
+        delivered_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+        restaurant:
+          type: object
+          properties:
+            id: { $ref: "#/components/schemas/ID" }
+            name: { type: string }
+            phone: { type: string }
+            address_line: { type: string }
+            city: { type: string }
+        order:
+          type: object
+          properties:
+            id: { $ref: "#/components/schemas/ID" }
+            status: { $ref: "#/components/schemas/OrderStatus" }
+            customer:
+              description: Only while the delivery is in progress.
+              oneOf:
+                - type: object
+                  properties:
+                    name: { type: string }
+                    phone: { type: string }
+                - type: "null"
+            address:
+              description: Only while the delivery is in progress.
+              oneOf:
+                - { $ref: "#/components/schemas/Address" }
+                - type: "null"
+            items:
+              type: array
+              items:
+                type: object
+                properties:
+                  name: { type: string }
+                  quantity: { type: integer }
+                  notes: { type: string }
+            total_cents: { $ref: "#/components/schemas/Cents" }
+            currency: { type: string }
+            notes: { type: string }
+
+    RestaurantEvent:
+      description: Data of events on GET /v1/restaurants/{restaurantID}/events.
+      type: object
+      properties:
+        order_id: { $ref: "#/components/schemas/ID" }
+        order_status: { $ref: "#/components/schemas/OrderStatus" }
+        driver_user_id:
+          oneOf:
+            - { $ref: "#/components/schemas/ID" }
+            - type: "null"
+        at: { $ref: "#/components/schemas/Timestamp" }
+    DriverEvent:
+      description: Data of events on GET /v1/me/events.
+      type: object
+      properties:
+        order_id: { $ref: "#/components/schemas/ID" }
+        restaurant_id: { $ref: "#/components/schemas/ID" }
+        order_status: { $ref: "#/components/schemas/OrderStatus" }
+        at: { $ref: "#/components/schemas/Timestamp" }

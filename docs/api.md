@@ -1,6 +1,7 @@
 # MenuGo API reference
 
-Base path: `/v1`. All request and response bodies are JSON.
+Base path: `/v1`. All request and response bodies are JSON. A
+machine-readable OpenAPI 3.1 description is in [openapi.yaml](openapi.yaml).
 
 ## Conventions
 

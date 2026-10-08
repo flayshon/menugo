@@ -14,7 +14,11 @@ cancellation), order management, drivers, driver assignment, the delivery
 lifecycle and real-time updates (server-sent events), plus rate limiting,
 soft deletion and opening hours.
 
-API reference: [docs/api.md](docs/api.md).
+API reference: [docs/api.md](docs/api.md) (prose, with the reasoning behind
+the rules) and [docs/openapi.yaml](docs/openapi.yaml) (OpenAPI 3.1, for
+tools: client generators, Swagger UI, Postman). A test fails if a route is
+added or removed without updating the OpenAPI file; `make docs/lint`
+validates it (needs Node.js).
 
 ## Requirements
 

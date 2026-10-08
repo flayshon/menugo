@@ -53,6 +53,11 @@ audit:
 	go vet ./...
 	go test -race ./...
 
+## docs/lint: validate docs/openapi.yaml (needs Node.js; downloads Redocly CLI)
+.PHONY: docs/lint
+docs/lint:
+	npx --yes @redocly/cli@1 lint docs/openapi.yaml
+
 # ==================================================================================== #
 # BUILD
 # ==================================================================================== #
