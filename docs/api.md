@@ -61,6 +61,43 @@ otherwise.
 {"status": "available", "system_info": {"environment": "development", "version": "0.1.0"}}
 ```
 
+## Public menu
+
+### `GET /v1/menus/{slug}`
+
+No authentication. What customers see. `404` if the slug doesn't exist **or
+the restaurant isn't published** (the two are indistinguishable).
+
+- Only visible categories that have at least one item are included, in
+  `sort_order`, each with its items in `sort_order`.
+- Sold-out items are included with `"is_available": false`; show them, but
+  don't let customers order them.
+- Only customer-facing fields are returned (the restaurant's email, internal
+  IDs, versions and timestamps are not). Item `id`s will be used to place
+  orders.
+- Response headers: `Cache-Control: public, max-age=60` (changes can take up
+  to a minute to show) and `Access-Control-Allow-Origin: *`, so any website
+  can embed the menu.
+
+```json
+{
+  "menu": {
+    "restaurant": {
+      "slug": "pizza-place", "name": "Pizza Place", "description": "", "phone": "",
+      "address_line": "", "city": "Recife", "postal_code": "", "currency": "BRL"
+    },
+    "categories": [
+      {
+        "id": 1, "name": "Pizzas", "description": "",
+        "items": [
+          {"id": 1, "name": "Margherita", "description": "", "price_cents": 4500, "image_url": "", "is_available": true}
+        ]
+      }
+    ]
+  }
+}
+```
+
 ## Users and authentication
 
 ### `POST /v1/users`: register
@@ -115,6 +152,7 @@ A restaurant:
   "city": "São Paulo",
   "postal_code": "",
   "currency": "BRL",
+  "is_published": false,
   "version": 1,
   "created_at": "2026-10-08T18:24:43.53Z",
   "updated_at": "2026-10-08T18:24:43.53Z"
@@ -130,6 +168,7 @@ A restaurant:
 | `phone` | ≤ 30 characters |
 | `email` | valid if present |
 | `address_line` / `city` / `postal_code` | ≤ 255 / 100 / 20 characters |
+| `is_published` | default `false`. While `false`, the public menu returns 404. |
 
 ### `POST /v1/restaurants`: create
 

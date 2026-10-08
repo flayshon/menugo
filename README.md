@@ -7,9 +7,9 @@ drivers.
 Written in Go with the standard library (`net/http`, `database/sql`,
 `log/slog`) and MariaDB, in the style of Alex Edwards' *Let's Go Further*.
 
-**Status:** Phase 2. Users, authentication, restaurants, membership/roles and
-menu management (categories and items) are implemented. The public menu,
-orders, delivery zones, drivers and deliveries come in later phases.
+**Status:** Phase 3. Users, authentication, restaurants, membership/roles,
+menu management (categories and items) and the public menu are implemented.
+Orders, delivery zones, drivers and deliveries come in later phases.
 
 API reference: [docs/api.md](docs/api.md).
 
@@ -153,7 +153,8 @@ docs/               API reference
 ### Not done yet
 
 - Rate limiting, especially on login (planned before production).
-- CORS, for when a browser front end is on another origin.
+- CORS for the authenticated API, for when a management front end is on
+  another origin. (The public menu already allows any origin.)
 - Email verification and password reset (needs a mailer).
 - Invitations for people who don't have an account yet.
 - Pagination: menu lists return everything, which is fine at restaurant-menu

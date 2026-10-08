@@ -21,6 +21,7 @@ type restaurantResponse struct {
 	City        string    `json:"city"`
 	PostalCode  string    `json:"postal_code"`
 	Currency    string    `json:"currency"`
+	IsPublished bool      `json:"is_published"`
 	Version     int32     `json:"version"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -38,6 +39,7 @@ func newRestaurantResponse(r *data.Restaurant) restaurantResponse {
 		City:        r.City,
 		PostalCode:  r.PostalCode,
 		Currency:    r.Currency,
+		IsPublished: r.IsPublished,
 		Version:     r.Version,
 		CreatedAt:   r.CreatedAt,
 		UpdatedAt:   r.UpdatedAt,
@@ -56,6 +58,7 @@ func (app *application) createRestaurantHandler(w http.ResponseWriter, r *http.R
 		City        string `json:"city"`
 		PostalCode  string `json:"postal_code"`
 		Currency    string `json:"currency"`
+		IsPublished bool   `json:"is_published"`
 	}
 
 	if err := app.readJSON(w, r, &input); err != nil {
@@ -73,6 +76,7 @@ func (app *application) createRestaurantHandler(w http.ResponseWriter, r *http.R
 		City:        input.City,
 		PostalCode:  input.PostalCode,
 		Currency:    input.Currency,
+		IsPublished: input.IsPublished,
 	}
 
 	v := validator.New()
@@ -179,6 +183,7 @@ func (app *application) updateRestaurantHandler(w http.ResponseWriter, r *http.R
 		City        *string `json:"city"`
 		PostalCode  *string `json:"postal_code"`
 		Currency    *string `json:"currency"`
+		IsPublished *bool   `json:"is_published"`
 	}
 
 	if err := app.readJSON(w, r, &input); err != nil {
@@ -200,6 +205,7 @@ func (app *application) updateRestaurantHandler(w http.ResponseWriter, r *http.R
 	setIfPresent(&restaurant.City, input.City)
 	setIfPresent(&restaurant.PostalCode, input.PostalCode)
 	setIfPresent(&restaurant.Currency, input.Currency)
+	setIfPresent(&restaurant.IsPublished, input.IsPublished)
 
 	v := validator.New()
 	if data.ValidateRestaurant(v, restaurant); !v.Valid() {

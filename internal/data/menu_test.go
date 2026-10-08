@@ -274,3 +274,35 @@ func TestDeletingRestaurantDeletesMenu(t *testing.T) {
 		t.Errorf("%d menu rows left after deleting the restaurant", n)
 	}
 }
+
+func TestGetPublishedBySlug(t *testing.T) {
+	t.Parallel()
+	m := NewModels(testdb.New(t))
+	ctx := context.Background()
+
+	r := newRestaurant(t, m, "pizza")
+	if r.IsPublished {
+		t.Fatal("restaurants should start unpublished")
+	}
+
+	if _, err := m.Restaurants.GetPublishedBySlug(ctx, "pizza"); !errors.Is(err, ErrRecordNotFound) {
+		t.Errorf("unpublished: err = %v; want ErrRecordNotFound", err)
+	}
+
+	r.IsPublished = true
+	if err := m.Restaurants.Update(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := m.Restaurants.GetPublishedBySlug(ctx, "pizza")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != r.ID || !got.IsPublished {
+		t.Errorf("got %+v", got)
+	}
+
+	if _, err := m.Restaurants.GetPublishedBySlug(ctx, "nope"); !errors.Is(err, ErrRecordNotFound) {
+		t.Errorf("missing: err = %v; want ErrRecordNotFound", err)
+	}
+}

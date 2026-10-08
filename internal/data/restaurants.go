@@ -23,6 +23,8 @@ type Restaurant struct {
 	City        string
 	PostalCode  string
 	Currency    string
+	// IsPublished makes the restaurant's menu visible to the public.
+	IsPublished bool
 	Version     int32
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -65,6 +67,20 @@ type RestaurantModel struct {
 	DB *sql.DB
 }
 
+const restaurantColumns = `id, slug, name, description, phone, email, address_line, city, postal_code,
+	currency, is_published, version, created_at, updated_at`
+
+// scanRestaurant scans restaurantColumns, followed by any extra destinations.
+func scanRestaurant(row interface{ Scan(...any) error }, extra ...any) (*Restaurant, error) {
+	var r Restaurant
+	dest := []any{
+		&r.ID, &r.Slug, &r.Name, &r.Description, &r.Phone, &r.Email, &r.AddressLine, &r.City,
+		&r.PostalCode, &r.Currency, &r.IsPublished, &r.Version, &r.CreatedAt, &r.UpdatedAt,
+	}
+	err := row.Scan(append(dest, extra...)...)
+	return &r, err
+}
+
 // InsertWithOwner creates restaurant and makes ownerID its owner, atomically.
 func (m RestaurantModel) InsertWithOwner(ctx context.Context, r *Restaurant, ownerID int64) error {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
@@ -77,11 +93,11 @@ func (m RestaurantModel) InsertWithOwner(ctx context.Context, r *Restaurant, own
 	defer tx.Rollback()
 
 	query := `
-		INSERT INTO restaurants (slug, name, description, phone, email, address_line, city, postal_code, currency)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO restaurants (slug, name, description, phone, email, address_line, city, postal_code, currency, is_published)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id, version, created_at, updated_at`
 
-	args := []any{r.Slug, r.Name, r.Description, r.Phone, r.Email, r.AddressLine, r.City, r.PostalCode, r.Currency}
+	args := []any{r.Slug, r.Name, r.Description, r.Phone, r.Email, r.AddressLine, r.City, r.PostalCode, r.Currency, r.IsPublished}
 
 	err = tx.QueryRowContext(ctx, query, args...).Scan(&r.ID, &r.Version, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
@@ -108,25 +124,35 @@ func (m RestaurantModel) Get(ctx context.Context, id int64) (*Restaurant, error)
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	query := `
-		SELECT id, slug, name, description, phone, email, address_line, city, postal_code,
-		       currency, version, created_at, updated_at
-		FROM restaurants
-		WHERE id = ?`
+	query := `SELECT ` + restaurantColumns + ` FROM restaurants WHERE id = ?`
 
-	var r Restaurant
-	err := m.DB.QueryRowContext(ctx, query, id).Scan(
-		&r.ID, &r.Slug, &r.Name, &r.Description, &r.Phone, &r.Email, &r.AddressLine, &r.City,
-		&r.PostalCode, &r.Currency, &r.Version, &r.CreatedAt, &r.UpdatedAt,
-	)
+	r, err := scanRestaurant(m.DB.QueryRowContext(ctx, query, id))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrRecordNotFound
 		}
 		return nil, fmt.Errorf("getting restaurant: %w", err)
 	}
+	return r, nil
+}
 
-	return &r, nil
+// GetPublishedBySlug returns the published restaurant with the given slug.
+// Unpublished restaurants are reported as ErrRecordNotFound, exactly like
+// missing ones.
+func (m RestaurantModel) GetPublishedBySlug(ctx context.Context, slug string) (*Restaurant, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	query := `SELECT ` + restaurantColumns + ` FROM restaurants WHERE slug = ? AND is_published`
+
+	r, err := scanRestaurant(m.DB.QueryRowContext(ctx, query, slug))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrRecordNotFound
+		}
+		return nil, fmt.Errorf("getting restaurant by slug: %w", err)
+	}
+	return r, nil
 }
 
 // Update saves r if nobody else has changed it since it was read (r.Version
@@ -140,12 +166,13 @@ func (m RestaurantModel) Update(ctx context.Context, r *Restaurant) error {
 	query := `
 		UPDATE restaurants
 		SET slug = ?, name = ?, description = ?, phone = ?, email = ?, address_line = ?,
-		    city = ?, postal_code = ?, currency = ?, version = version + 1, updated_at = ?
+		    city = ?, postal_code = ?, currency = ?, is_published = ?,
+		    version = version + 1, updated_at = ?
 		WHERE id = ? AND version = ?`
 
 	args := []any{
 		r.Slug, r.Name, r.Description, r.Phone, r.Email, r.AddressLine,
-		r.City, r.PostalCode, r.Currency, updatedAt,
+		r.City, r.PostalCode, r.Currency, r.IsPublished, updatedAt,
 		r.ID, r.Version,
 	}
 
@@ -175,7 +202,6 @@ func (m RestaurantModel) Delete(ctx context.Context, id int64) error {
 	if err != nil {
 		return fmt.Errorf("deleting restaurant: %w", err)
 	}
-
 	return expectOneRow(result, ErrRecordNotFound)
 }
 
@@ -186,12 +212,13 @@ func (m RestaurantModel) ListForUser(ctx context.Context, userID int64) ([]Resta
 	defer cancel()
 
 	query := `
-		SELECT r.id, r.slug, r.name, r.description, r.phone, r.email, r.address_line, r.city,
-		       r.postal_code, r.currency, r.version, r.created_at, r.updated_at, ru.role
-		FROM restaurants r
-		INNER JOIN restaurant_users ru ON ru.restaurant_id = r.id
-		WHERE ru.user_id = ?
-		ORDER BY r.name, r.id`
+		SELECT ` + restaurantColumns + `, ru.role
+		FROM restaurants
+		INNER JOIN (
+			-- Only these columns, so restaurantColumns stays unambiguous.
+			SELECT restaurant_id, role FROM restaurant_users WHERE user_id = ?
+		) ru ON ru.restaurant_id = restaurants.id
+		ORDER BY name, id`
 
 	rows, err := m.DB.QueryContext(ctx, query, userID)
 	if err != nil {
@@ -201,15 +228,12 @@ func (m RestaurantModel) ListForUser(ctx context.Context, userID int64) ([]Resta
 
 	restaurants := []RestaurantWithRole{}
 	for rows.Next() {
-		var r RestaurantWithRole
-		err := rows.Scan(
-			&r.ID, &r.Slug, &r.Name, &r.Description, &r.Phone, &r.Email, &r.AddressLine, &r.City,
-			&r.PostalCode, &r.Currency, &r.Version, &r.CreatedAt, &r.UpdatedAt, &r.Role,
-		)
+		var role Role
+		r, err := scanRestaurant(rows, &role)
 		if err != nil {
 			return nil, fmt.Errorf("scanning restaurant: %w", err)
 		}
-		restaurants = append(restaurants, r)
+		restaurants = append(restaurants, RestaurantWithRole{Restaurant: *r, Role: role})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("listing restaurants: %w", err)

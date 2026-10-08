@@ -11,6 +11,9 @@ func (app *application) routes() http.Handler {
 
 	mux.HandleFunc("GET /v1/healthcheck", app.healthcheckHandler)
 
+	// Public, for customers: no authentication.
+	mux.HandleFunc("GET /v1/menus/{slug}", app.showPublicMenuHandler)
+
 	mux.HandleFunc("POST /v1/users", app.registerUserHandler)
 	mux.HandleFunc("GET /v1/users/me", app.requireAuthenticatedUser(app.showCurrentUserHandler))
 
